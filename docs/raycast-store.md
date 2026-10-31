@@ -44,8 +44,9 @@ The exporter copies only extension source, assets, Store metadata, standalone ma
 
 Verified on 2026-10-31:
 
-- A fresh standalone export installed with `npm ci --ignore-scripts`, passed `ray lint`, passed all 38 extension tests and completed the official distribution build with TypeScript checking.
+- A fresh standalone export installed with `npm ci --ignore-scripts`, passed `ray lint`, passed all 40 extension tests and completed the official distribution build with TypeScript checking.
 - Repository backend regression: 54 passed and one optional native Codex test skipped, including protocol snapshot and safe-export regressions. The bridge CLI smoke test passed. That regression run made no paid model request. Separately, the user-authorized dedicated local Claude acceptance made real model calls and verified same-session context recall.
+- Review feedback is covered by regressions for reconnect snapshots, durable retry IDs, custom discovery ports, generated preference types, and confirmed-rejection recovery. Rejected sends keep their draft; uncertain or previously queued attempts retain their original ID.
 - Both the repository and standalone dependency audits reported zero vulnerabilities after applying the minimatch override.
 - The screenshot metadata passed Raycast's dimensions/format validation and was visually inspected. Screenshots use disposable data and a dedicated local Claude acceptance session, never an existing user task. The local-context screenshot shows offline state after its bridge was cleaned up.
 - The standalone distribution build loaded in the actual Raycast app. Its discovery screen, rescan action and action menu were exercised. Earlier screenshots covered UI-only acceptance. A separate dedicated real local Claude fixture now verifies model replies and context recall; it never targets an existing user task. See [local acceptance](local-acceptance.md).
