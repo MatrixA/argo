@@ -177,7 +177,7 @@ function transport(options: Omit<Options, "threadId">) {
 }
 async function initialize(rpc: JsonRpc) {
   await rpc.request("initialize", {
-    clientInfo: { name: "argo", title: "Argo connector", version: "0.1.2" },
+    clientInfo: { name: "argo", title: "Argo connector", version: "0.1.3" },
     capabilities: { experimentalApi: true, requestAttestation: false },
   }, z.object({ userAgent: z.string().max(4000) }));
   await rpc.write({ jsonrpc: "2.0", method: "initialized", params: {} });

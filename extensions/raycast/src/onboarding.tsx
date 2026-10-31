@@ -1,3 +1,5 @@
+import { DiscoverBridges } from "./discovery-ui.js";
+export { DiscoverBridges } from "./discovery-ui.js";
 import { Action, ActionPanel, Color, Detail, Form, Icon, List, LocalStorage, Toast, confirmAlert, Alert, getPreferenceValues, popToRoot, showToast, useNavigation } from "@raycast/api";
 import { useEffect, useRef, useState } from "react";
 import type { Pairing } from "../../../packages/shared/src/protocol.js";
@@ -10,8 +12,8 @@ type Props = {
 };
 function ConnectionGuide() {
     return <Detail navigationTitle="Argo Connection Guide" markdown={setupGuide} actions={<ActionPanel>
-  <Action.OpenInBrowser title="Public Installation Instructions" url="https://github.com/MatrixA/argo/blob/v0.1.2/docs/connect.md"/>
-  <Action.OpenInBrowser title="Codex Connection Instructions" url="https://github.com/MatrixA/argo/blob/v0.1.2/docs/connect-codex.md"/>
+  <Action.OpenInBrowser title="Public Installation Instructions" url="https://github.com/MatrixA/argo/blob/v0.1.3/docs/connect.md"/>
+  <Action.OpenInBrowser title="Codex Connection Instructions" url="https://github.com/MatrixA/argo/blob/v0.1.3/docs/connect-codex.md"/>
  </ActionPanel>}/>;
 }
 function ExistingBridge({ onConnected }: Props) {
@@ -188,12 +190,13 @@ export function Setup({ onConnected }: Props) {
     catch (cause) {
         await showToast({ style: Toast.Style.Failure, title: "Connection not changed", message: errorText(cause) });
     } }
-    const actions = <><Action.Push title="Add Existing Bridge" target={<ExistingBridge onConnected={() => { feed.reconnect(); onConnected(); void profiles(LocalStorage).then(setEntries); }}/>}/><Action.Push title="Open Setup Guide" target={<ConnectionGuide />}/></>;
+    const actions = <><Action.Push title="Find Forwarded Server Bridges" target={<DiscoverBridges onConnected={onConnected} />} /><Action.Push title="Add Existing Bridge" target={<ExistingBridge onConnected={() => { feed.reconnect(); onConnected(); void profiles(LocalStorage).then(setEntries); }}/>}/><Action.Push title="Open Setup Guide" target={<ConnectionGuide />}/></>;
     return <List navigationTitle="Argo · Connection Setup" searchBarPlaceholder="Find your setup or bridge" isLoading={feed.loading} actions={<ActionPanel>{actions}</ActionPanel>}>
   <List.Section title="Connection">
    <List.Item title={feed.connection === "live" ? feed.profileName : "Bridge needs attention"} subtitle={feed.address || feed.error || "Checking private configuration"} icon={{ source: feed.connection === "live" ? Icon.Checkmark : Icon.Warning, tintColor: feed.connection === "live" ? Color.Green : Color.Orange }} actions={<ActionPanel><Action title="Test Again" icon={Icon.ArrowClockwise} onAction={feed.reconnect}/>{actions}</ActionPanel>}/>
    <List.Item title="Use an Existing Bridge" subtitle="Private config file + local address · Test before switching" icon={Icon.Plug} actions={<ActionPanel>{actions}</ActionPanel>}/>
   </List.Section>
+  <List.Section title="Server-first setup"><List.Item title="Set Up a Fresh Server" subtitle="Copy one GitHub prompt · Ordinary port forwarding · Discover and pair once" icon={Icon.Network} actions={<ActionPanel><Action.Push title="Find Forwarded Server Bridges" target={<DiscoverBridges onConnected={onConnected} />} /></ActionPanel>} /></List.Section>
   <List.Section title="Connect an Agent" subtitle="Choose where things run, not a forwarding flag">
    {(Object.entries(setupModes) as Array<[
         SetupMode,

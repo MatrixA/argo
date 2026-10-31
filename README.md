@@ -10,9 +10,21 @@ Argo is a loopback companion bridge (on your Mac or a server), a lightweight Age
 - Claude Code with its Bash tool for on-demand pull attachment. Channels support is optional. Codex needs a shared App Server and `app-server proxy` support.
 - For remote connections: Node.js and the connector on the Agent machine, plus a working loopback transport to the chosen bridge. Existing SSH LocalForward or RemoteForward both work; the bridge can run on the Mac or a server.
 
-The GitHub self-service installer is pinned to release `v0.1.2`, including diagnostics, private admin export and separate Claude/Codex installation modes. Load the Raycast extension from this checkout. Codex remains experimental; release availability is not proof that an arbitrary running Codex session can attach.
+The GitHub self-service installer is pinned to release `v0.1.3`, including server-first installation, signed discovery and separate Mac-client pairing. Load the Raycast extension from this checkout. Codex remains experimental; release availability is not proof that an arbitrary running Codex session can attach.
 
 The protocols are evolving. Development used Claude Code 2.1.314 and Codex CLI 0.157.1. A successful build or mock test is not proof that your installation enables these experimental features.
+
+## Start with an uninstalled server Agent
+
+Give the existing Agent this public entry point: [server-setup.md](docs/server-setup.md). The instructions begin with no Argo installation, no bridge URL and no pairing code. The Agent downloads and inspects the pinned v0.1.3 installer, runs `--server`, prepares a server-local bridge and joins its exact current session using the supported adapter. Installation does not start another model or alter Agent security policy.
+
+The Agent returns a server port and a short-lived **Mac pairing code**. Forward that port with ordinary Local Port Forwarding (for example VS Code Ports) into an unused **Mac loopback port 49120–49139**. Open Argo's **Find Forwarded Server Bridges**, select the discovered identity, and enter the code once. No Remote Forward, bridge-address entry or admin-file transfer is needed. Port forwarding is still necessary and is not automatically created by installing the extension. Discovery range is configurable, with a maximum of 64 loopback ports.
+
+Discovery is credential-free and checks a fresh signed challenge. Pairing pins the public bridge identity from the user-provided code before consuming it. The Mac stores its independent durable client credential in a private file, not preferences or LocalStorage. Discovery alone never authorizes a connection. After pairing, all configured bridges' sessions are aggregated. Opening Argo resumes the last valid conversation; All Sessions switches targets. Pinned bridge identity keeps drafts/recent state stable when local forwarding ports change and prevents sending stored credentials to an unrelated discovered identity.
+
+Same-user Agents on one server share one bridge. Multiple servers may use the same server port but require different mapped Mac ports. The new bridge and connectors use supported tool-managed background execution; they are not silently installed as launchd/systemd services. For server-side recovery, `client-invite` refreshes a Mac invitation and `revoke-clients` revokes all paired Mac clients without replacing the server's admin configuration. Removing a local saved profile is not revocation.
+
+Claude uses cooperative pull, which occupies its current turn. Codex requires its current loaded thread on an existing shared App Server and remains experimental. Neither successful discovery nor registration proves a real model round-trip.
 
 ## Build and start
 
@@ -34,7 +46,7 @@ Use `ARGO_HOME=/private/path` to isolate an installation, or `serve --port PORT`
 npm run dev --workspace extensions/raycast
 ```
 
-Open **Argo → Agent Sessions** in Raycast. Use **Connection Setup** to choose where the bridge and Agent run, keep an existing tunnel, or add/switch bridge connections. **Use an Existing Bridge** takes a private configuration file path and **Address From This Mac**; it verifies authenticated access before switching. Saved profiles contain references and per-Mac loopback URL overrides, never token contents. The default remains `~/.argo/client.json`, or the configured preference path. Set **Recent Agent Session** to a global shortcut for direct access to your last conversation.
+Open **Argo → Agent Sessions** in Raycast. Use **Connection Setup** to choose where the bridge and Agent run, keep an existing tunnel, or add/switch bridge connections. **Use an Existing Bridge** takes a private configuration file path and **Address From This Mac**; it verifies authenticated access before switching. Saved profiles contain references and per-Mac loopback URL overrides, never token contents. The default remains `~/.argo/client.json`, or the configured preference path. Both Argo entry commands resume the last valid conversation. Set a global shortcut for direct access; use **All Sessions** to switch Agents across paired bridges.
 
 For a server bridge, [export/import its admin file privately](docs/topologies.md#export-and-import-admin-access-privately) on the Mac first. For Agents, create separate scoped pairing prompts and enter **Address From Agent** as seen on their own machine. Admin import is not Agent pairing. The same bridge can serve Mac and server Agents at once.
 
@@ -273,6 +285,8 @@ On the development installation, this acceptance test **fails at empty-thread re
 `npm run smoke` drives the public compiled CLI through service startup, pairing, connector registration, multiline send, reply, history, and detach. Its Agent is a test adapter, not a real model. The updated Raycast extension was driven in the actual app against an isolated bridge and synthetic Agent. Private-file import, authenticated connection switching, local pairing-prompt generation with a secret-safe preview, sending a synthetic message, automatic selection of its arriving reply, offline send refusal, and draft persistence after closing/reopening the conversation were verified. The default bridge was preserved. No user conversation was read or sent test input. Regression tests additionally cover matching replies, manual history navigation, stale Recent fallback, per-bridge drafts and cross-connection send guards. Permission views, real Claude model round-trips, and external SSH end-to-end behavior remain unverified.
 
 The published `v0.1.2` release was anonymously downloaded and installed in a clean temporary home, with its checksum verified. The installed Claude connector claimed a single-use code, attached an exact synthetic session, completed a synthetic receive/ack/reply round-trip, and revoked the binding. A separate Codex-mode production install created no Claude skill or Codex configuration, claimed a Codex-scoped code, and revoked that binding without starting native Codex. This used a real local bridge and the public GitHub release, with the configured network proxy explicitly enabled for Node. It did not verify native Codex rejoin, call a model, or connect to an external SSH server.
+
+The v0.1.3 server-first regression suite additionally exercises zero-config bootstrap, preferred-port collisions/exhaustion, signed discovery and identity pinning before authenticated reuse, private scoped credentials, single-use Mac pairing, UI-token revocation and subscription closure. Extension regressions cover bounded credential-free discovery, multi-bridge routing with duplicate binding IDs, independent subscriptions, first-run discovery and default recent-conversation restoration. The actual Raycast app discovered an isolated fresh bridge; no user conversation was used. Native Codex model round-trips and external SSH acceptance remain unverified.
 
 The public-installer tests validate checksums, bounded GitHub redirects, strict archive entries, rollback, and real production installation in isolated homes. Pairing tests cover expiry, cancellation, concurrent single-use claims, hashed storage, browser rejection, and CLI secret handling.
 

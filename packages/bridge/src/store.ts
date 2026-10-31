@@ -1,21 +1,43 @@
 import { DatabaseSync } from "node:sqlite";
-import { randomBytes, randomUUID, createHash } from "node:crypto";
-import { chmodSync, mkdirSync } from "node:fs";
+import { randomBytes, randomUUID, createHash, createPrivateKey, createPublicKey, generateKeyPairSync, sign, type KeyObject } from "node:crypto";
+import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { AgentEvent, BridgeEvent, Capabilities, Command, ConnectorFrame, Interaction, Message, Session, Snapshot, Status } from "../../shared/src/protocol.js";
 
 export const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 export const secret = () => randomBytes(32).toString("hex");
+// Read public pinning metadata only: constructing Store would recover/mutate live sessions.
+export function readBridgeId(database: string): string | undefined {
+  if (!existsSync(database)) return undefined;
+  const db = new DatabaseSync(database, { readOnly: true });
+  try {
+    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='metadata'").get()) return undefined;
+    const row = db.prepare("SELECT value FROM metadata WHERE key='bridge_public_key'").get();
+    if (!row) return undefined;
+    try {
+      const der = Buffer.from(String(row.value), "base64");
+      const key = createPublicKey({ key: der, type: "spki", format: "der" });
+      if (key.asymmetricKeyType !== "ed25519" || key.export({ type: "spki", format: "der" }).toString("base64") !== row.value) throw new Error();
+      return createHash("sha256").update(der).digest("hex");
+    } catch { throw new Error("Invalid persisted bridge public identity"); }
+  } finally { db.close(); }
+}
 const noCapabilities: Capabilities = { send: false, streaming: false, interrupt: false, approvals: false, questions: false };
 interface StoredSession extends Session { tokenHash: string; runtimeId: string | null; inFlight: string | null; runtimeStatus?: Status }
 export class Store {
   readonly db: DatabaseSync;
+  readonly bridgeId: string;
+  readonly publicKey: string;
+  readonly #identityKey: KeyObject;
   onEvent: (event: BridgeEvent) => void = () => {};
   constructor(path: string) {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     this.db = new DatabaseSync(path);
     chmodSync(path, 0o600);
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
+      CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS client_pairings (hash TEXT PRIMARY KEY, expires INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS clients (hash TEXT PRIMARY KEY, created INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS messages (binding TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL, created INTEGER NOT NULL, PRIMARY KEY(binding,id));
       CREATE TABLE IF NOT EXISTS commands (id TEXT PRIMARY KEY, binding TEXT NOT NULL, data TEXT NOT NULL, state TEXT NOT NULL, created INTEGER NOT NULL);
@@ -25,6 +47,17 @@ export class Store {
       CREATE TABLE IF NOT EXISTS events (cursor INTEGER PRIMARY KEY AUTOINCREMENT, binding TEXT NOT NULL, type TEXT NOT NULL, created INTEGER NOT NULL);
       CREATE INDEX IF NOT EXISTS message_history ON messages(binding,created);
       CREATE INDEX IF NOT EXISTS command_queue ON commands(binding,state,created);`);
+    let identity = this.db.prepare("SELECT value FROM metadata WHERE key='bridge_identity'").get();
+    if (!identity) {
+      const key = generateKeyPairSync("ed25519").privateKey.export({ type: "pkcs8", format: "der" }).toString("base64");
+      this.db.prepare("INSERT OR IGNORE INTO metadata VALUES ('bridge_identity',?)").run(key);
+      identity = this.db.prepare("SELECT value FROM metadata WHERE key='bridge_identity'").get();
+    }
+    this.#identityKey = createPrivateKey({ key: Buffer.from(String(identity!.value), "base64"), type: "pkcs8", format: "der" });
+    const publicKey = createPublicKey(this.#identityKey).export({ type: "spki", format: "der" });
+    this.publicKey = publicKey.toString("base64");
+    this.db.prepare("INSERT OR REPLACE INTO metadata VALUES ('bridge_public_key',?)").run(this.publicKey);
+    this.bridgeId = createHash("sha256").update(publicKey).digest("hex");
     for (const session of this.allStored()) {
       session.online = false;
       session.runtimeStatus = "offline";
@@ -44,6 +77,37 @@ export class Store {
     // Recovery mutates snapshots too. Persist invalidations for clients resuming an old SSE cursor.
     for (const session of this.allStored()) this.publish(session.id, "recovery");
   }
+  discovery(challenge: string) {
+    if (challenge.length !== 32 || !/^[a-f0-9]{32}$/.test(challenge)) throw new Error("Invalid discovery challenge");
+    const signature = sign(null, Buffer.from(`argo-discovery-v1\n${challenge}\n${this.bridgeId}`, "utf8"), this.#identityKey).toString("base64");
+    return { service: "argo" as const, protocol: 1 as const, bridgeId: this.bridgeId, publicKey: this.publicKey, challenge, signature };
+  }
+  createClientPairing() {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.db.prepare("DELETE FROM client_pairings WHERE expires<=?").run(Date.now());
+      if (Number(this.db.prepare("SELECT count(*) AS n FROM client_pairings").get()?.n) >= 20) throw new Error("Too many pending client pairing codes; wait for expiry");
+      const code = `ARGO-CLIENT-${this.bridgeId}-${randomBytes(16).toString("hex")}`;
+      const expiresAt = Date.now() + 10 * 60_000;
+      this.db.prepare("INSERT INTO client_pairings VALUES (?,?)").run(hash(code), expiresAt);
+      this.db.exec("COMMIT");
+      return { code, expiresAt, bridgeId: this.bridgeId };
+    } catch (error) { this.db.exec("ROLLBACK"); throw error; }
+  }
+  claimClientPairing(code: string) {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const pairing = this.db.prepare("SELECT expires FROM client_pairings WHERE hash=?").get(hash(code));
+      if (!pairing || Number(pairing.expires) <= Date.now()) throw new Error("Client pairing code is invalid, expired, or already used");
+      const token = secret();
+      this.db.prepare("DELETE FROM client_pairings WHERE hash=?").run(hash(code));
+      this.db.prepare("INSERT INTO clients VALUES (?,?)").run(hash(token), Date.now());
+      this.db.exec("COMMIT");
+      return { token, bridgeId: this.bridgeId };
+    } catch (error) { this.db.exec("ROLLBACK"); throw error; }
+  }
+  authenticateClient(token: string): boolean { return Boolean(this.db.prepare("SELECT 1 FROM clients WHERE hash=?").get(hash(token))); }
+  revokeClients() { this.db.exec("DELETE FROM clients"); }
   private allStored(): StoredSession[] { return this.db.prepare("SELECT data FROM sessions").all().map(r => JSON.parse(String(r.data)) as StoredSession); }
   get(binding: string): StoredSession {
     const row = this.db.prepare("SELECT data FROM sessions WHERE id=?").get(binding);

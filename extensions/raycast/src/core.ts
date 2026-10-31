@@ -4,16 +4,17 @@ import { isAbsolute, join } from "node:path";
 import { localUrl } from "../../../packages/shared/src/protocol.js";
 import type { BridgeEvent, Pairing, Session, Snapshot } from "../../../packages/shared/src/protocol.js";
 
-export type ClientConfig = { url: string; token: string };
+export type ClientConfig = { url: string; token: string; bridgeId?: string };
 export type Connection = "connecting" | "live" | "offline";
 
 export function parseConfig(value: unknown): ClientConfig {
   if (!value || typeof value !== "object") throw new Error("Invalid client configuration");
-  const { url, token } = value as Partial<ClientConfig>;
+  const { url, token, bridgeId } = value as Partial<ClientConfig>;
   if (typeof url !== "string" || typeof token !== "string" || token.length < 32 || token.length > 200 || /\s/.test(token)) {
     throw new Error("Client configuration must contain a loopback URL and a valid token");
   }
-  return { url: localUrl(url).origin, token };
+  if (bridgeId !== undefined && (typeof bridgeId !== "string" || !/^[a-f0-9]{64}$/.test(bridgeId))) throw new Error("Invalid bridge identity");
+  return { url: localUrl(url).origin, token, ...(bridgeId ? { bridgeId } : {}) };
 }
 
 export async function readConfig(configPath?: string): Promise<ClientConfig> {
@@ -48,14 +49,14 @@ export function safeMarkdown(text: string): string {
 export function remotePrompt(name:string,url:string,code:string,adapter:"claude"|"codex"="claude"):string {
   localUrl(url);
   if(!/^ARGO-[a-f0-9]{32}$/.test(code))throw new Error("Invalid pairing code");
-  if(adapter==="codex") return `Read https://github.com/MatrixA/argo/blob/v0.1.2/docs/connect-codex.md and follow it to connect THIS existing Codex session to Argo, not a subagent or a new model.
+  if(adapter==="codex") return `Read https://github.com/MatrixA/argo/blob/v0.1.3/docs/connect-codex.md and follow it to connect THIS existing Codex session to Argo, not a subagent or a new model.
 Bridge address reachable FROM THIS AGENT MACHINE: ${url}
 Display name: ${JSON.stringify(name)}
 One-time pairing code: ${code}
 First verify this session supplies authoritative CODEX_THREAD_ID and the existing shared App Server supports app-server proxy. If unavailable, stop and report the exact missing prerequisite. Do not guess from history, restart Codex, start a new daemon/thread, use codex exec/resume, or change sandbox/approval policy to fake attachment.
-Install pinned v0.1.2 with --agent codex. Claim the single-use code via stdin. Never read or print the resulting durable credential. Use the existing transport and this exact bridge address. Do not change SSH tunnels or global settings.
+Install pinned v0.1.3 with --agent codex. Claim the single-use code via stdin. Never read or print the resulting durable credential. Use the existing transport and this exact bridge address. Do not change SSH tunnels or global settings.
 Run the installed connector with its private credential file and this exact loaded thread. Keep only this connector alive using the session's supported background execution. Report ready only after authenticated registration. Native populated-session rejoin is experimental; on failure report it without falling back to another session.`;
-  return `Read https://github.com/MatrixA/argo/blob/v0.1.2/docs/connect.md and follow it to install Argo and bind THIS existing Claude session, not a subagent or a new model.
+  return `Read https://github.com/MatrixA/argo/blob/v0.1.3/docs/connect.md and follow it to install Argo and bind THIS existing Claude session, not a subagent or a new model.
 Bridge address reachable FROM THIS AGENT MACHINE: ${url}
 Display name: ${JSON.stringify(name)}
 One-time pairing code: ${code}

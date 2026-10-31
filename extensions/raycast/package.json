@@ -8,7 +8,10 @@
   "license": "MIT",
   "private": true,
   "type": "module",
-  "categories": ["Developer Tools", "Productivity"],
+  "categories": [
+    "Developer Tools",
+    "Productivity"
+  ],
   "commands": [
     {
       "name": "sessions",
@@ -23,6 +26,13 @@
       "subtitle": "Argo",
       "description": "Continue the last session opened in Argo.",
       "mode": "view"
+    },
+    {
+      "name": "connect",
+      "title": "Connect a Server",
+      "subtitle": "Argo",
+      "description": "Start with an uninstalled Agent, discover ordinary forwarded ports and pair once.",
+      "mode": "view"
     }
   ],
   "preferences": [
@@ -33,6 +43,22 @@
       "type": "textfield",
       "required": false,
       "placeholder": "~/.argo/client.json"
+    },
+    {
+      "name": "portStart",
+      "title": "Discovery Port Range Start",
+      "description": "Only Mac loopback ports are checked. Forward server bridges into this range. Maximum 64 ports.",
+      "type": "textfield",
+      "required": false,
+      "default": "49120"
+    },
+    {
+      "name": "portEnd",
+      "title": "Discovery Port Range End",
+      "description": "Last Mac loopback port to check for signed Argo bridge identities.",
+      "type": "textfield",
+      "required": false,
+      "default": "49139"
     }
   ],
   "scripts": {

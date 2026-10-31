@@ -36,19 +36,19 @@ Also confirm this session's tool supports a **long-running background process th
 
 ## 1. Download and inspect the pinned public installer
 
-Use the same bounded, HTTPS-only public download pattern as [connect.md](connect.md), pinned to **v0.1.2**. Use a fresh private directory, save the installer as a file, and inspect it before execution. Never `curl | sh`, use a mutable `main` URL, or run an interpreter/build tool from inside a downloaded archive.
+Use the same bounded, HTTPS-only public download pattern as [connect.md](connect.md), pinned to **v0.1.3**. Use a fresh private directory, save the installer as a file, and inspect it before execution. Never `curl | sh`, use a mutable `main` URL, or run an interpreter/build tool from inside a downloaded archive.
 
 ```sh
 umask 077
 ARGO_SETUP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/argo-setup.XXXXXX")
 node --input-type=module - "$ARGO_SETUP_DIR/install.mjs" <<'ARGO_FETCH_END'
 import { writeFileSync } from 'node:fs';
-const source = 'https://github.com/MatrixA/argo/releases/download/v0.1.2/install.mjs';
+const source = 'https://github.com/MatrixA/argo/releases/download/v0.1.3/install.mjs';
 let url = new URL(source), bytes;
 const signal = AbortSignal.timeout(30000);
 for (let n = 0; n <= 5; n++) {
   if (url.protocol !== 'https:' || url.port || url.username || url.password || url.hash || !(
-    url.origin === 'https://github.com' && url.pathname.startsWith('/MatrixA/argo/releases/download/v0.1.2/') ||
+    url.origin === 'https://github.com' && url.pathname.startsWith('/MatrixA/argo/releases/download/v0.1.3/') ||
     ['release-assets.githubusercontent.com', 'objects.githubusercontent.com', 'github-releases.githubusercontent.com'].includes(url.hostname)
   )) throw new Error('Unexpected installer download URL');
   const response = await fetch(url, { redirect: 'manual', credentials: 'omit', signal });
@@ -71,7 +71,7 @@ ARGO_FETCH_END
 printf 'Installer saved at %s/install.mjs\n' "$ARGO_SETUP_DIR"
 ```
 
-Remember the **absolute path**, since shell variables may not survive separate tool calls. Read only that installer code, not credentials. The installer verifies the archive against `SHA256SUMS` from the same release: this detects corruption, not a compromised publisher. For independent provenance, compare the installer hash against a separately trusted release checksum before execution. If v0.1.2 assets are unavailable, stop; do not fall back to a mutable branch or another version silently.
+Remember the **absolute path**, since shell variables may not survive separate tool calls. Read only that installer code, not credentials. The installer verifies the archive against `SHA256SUMS` from the same release: this detects corruption, not a compromised publisher. For independent provenance, compare the installer hash against a separately trusted release checksum before execution. If v0.1.3 assets are unavailable, stop; do not fall back to a mutable branch or another version silently.
 
 ## 2. Install runtime only
 
@@ -82,7 +82,7 @@ node /absolute/fresh/argo-setup.XXXXXX/install.mjs \
   --agent codex --url 'http://127.0.0.1:49123' --name 'backend'
 ```
 
-The installer fetches pinned `v0.1.2/argo-connector.tar.gz` and `SHA256SUMS`, verifies SHA-256 and safe archive entries, extracts into unique private staging, and runs production `npm ci --omit=dev --ignore-scripts --workspaces=false`. It installs public runtime code/dependencies only. **It creates no Claude skill, changes no Codex/Claude configuration, and starts no claim, connector, Codex/model, or daemon.** Nothing is added to PATH; existing installations are not overwritten.
+The installer fetches pinned `v0.1.3/argo-connector.tar.gz` and `SHA256SUMS`, verifies SHA-256 and safe archive entries, extracts into unique private staging, and runs production `npm ci --omit=dev --ignore-scripts --workspaces=false`. It installs public runtime code/dependencies only. **It creates no Claude skill, changes no Codex/Claude configuration, and starts no claim, connector, Codex/model, or daemon.** Nothing is added to PATH; existing installations are not overwritten.
 
 `ARGO_INSTALL_READY` includes `adapter: "codex"`, the unique `release`, absolute `launcher`, future `credential` file path, and `claim` command. Save these **paths**, never credential contents. The runtime is under `~/.local/share/argo/releases/<uuid>`. The installer can be removed afterward. This result means **installed only**, not ready to receive messages.
 

@@ -12,6 +12,10 @@ import { createClaudeChannel } from "./claude.js";
 
 const help=`Argo: connect Raycast to an existing Agent session.
 
+  argo server-bootstrap --agent claude|codex --name NAME [--port PORT]
+                                          Start/reuse only the bridge; print pairing code and private agent file path
+  argo client-invite                      Refresh a one-time UI client pairing code (admin only)
+  argo revoke-clients                     Revoke UI client access (admin only); leave Agents running
   argo serve [--port 48123]                 Run the loopback bridge
   argo doctor [--url LOOPBACK_URL]         Safe JSON diagnostics; --url sends no admin token
   argo export-client --out NEW_FILE --url LOOPBACK_URL
@@ -60,6 +64,19 @@ async function main() {
   const command=parsed.positionals[0];const opts=parsed.values;
   const required=(name:keyof typeof opts)=>{const value=opts[name];if(typeof value!=="string"||!value)throw new Error(`Missing --${name}`);return value;};
   if(!command||opts.help){console.log(help);return;}
+  if(command==="server-bootstrap") {
+    const {serverBootstrap}=await import("./bootstrap.js");
+    const ready=await serverBootstrap({agent:required("agent"),name:required("name"),port:opts.port},stopOnSignal);
+    console.log(`ARGO_SERVER_READY ${JSON.stringify(ready)}`);return;
+  }
+  if(command==="client-invite") {
+    const {clientInvite}=await import("./bootstrap.js");
+    console.log(JSON.stringify(await clientInvite()));return;
+  }
+  if(command==="revoke-clients") {
+    const {revokeClients}=await import("./bootstrap.js");
+    await revokeClients();console.log("UI clients revoked. Agent bindings and the bridge were not stopped.");return;
+  }
   if(command==="doctor") {
     const {diagnose}=await import("./diagnostics.js");
     console.log(JSON.stringify(await diagnose(opts.url),null,2));return;

@@ -7,11 +7,21 @@ import { randomUUID } from "node:crypto";
 import { Fragment, useEffect, useRef, useState } from "react";
 import type { Interaction, Message, Session } from "../../../packages/shared/src/protocol.js";
 import { Hub, HubError, safeMarkdown } from "./core.js";
-import { errorText, recentKey, useDraft, useHub } from "./hooks.js";
+import { errorText, recentKey, useBridges, useDraft, useHub } from "./hooks.js";
 import { loadConnection } from "./connections.js";
-import { Setup } from "./onboarding.js";
+import { DiscoverBridges, Setup } from "./onboarding.js";
+import { portRange } from "./discovery.js";
 
-export type Context = { bindingId?: string; recent?: boolean };
+export type Context = { bindingId?: string; profileId?: string; connectionKey?: string; recent?: boolean };
+export const LAST_CONVERSATION_KEY = "last-conversation-v1";
+type ConversationTarget = { profileId: string; bindingId: string; connectionKey: string };
+export function parseLastConversation(raw: string): ConversationTarget {
+  const value = JSON.parse(raw);
+  if (!value || typeof value.profileId !== "string" || !value.profileId || value.profileId.length > 100
+    || typeof value.bindingId !== "string" || !value.bindingId || value.bindingId.length > 200
+    || typeof value.connectionKey !== "string" || !/^[a-f0-9]{24}$/.test(value.connectionKey)) throw new Error("Invalid recent conversation reference");
+  return { profileId: value.profileId, bindingId: value.bindingId, connectionKey: value.connectionKey };
+}
 const project = (session: Session) => session.cwd.split(/[\\/]/).filter(Boolean).pop() || session.cwd || "No project";
 const title = (session: Session) => session.name || project(session);
 export function sessionStatus(session: Session): string {
@@ -24,7 +34,7 @@ export function sessionGroup(session: Session): "Needs Attention" | "Online" | "
   if (session.revoked || !session.online || session.status === "offline") return "Offline";
   return session.uncertainMessageId || ["waiting", "unknown", "error"].includes(session.status) ? "Needs Attention" : "Online";
 }
-export function orderedSessions(sessions: readonly Session[]): Session[] {
+export function orderedSessions<T extends Session>(sessions: readonly T[]): T[] {
   const groups = ["Needs Attention", "Online", "Offline"];
   return [...sessions].sort((a, b) => groups.indexOf(sessionGroup(a)) - groups.indexOf(sessionGroup(b))
     || b.updatedAt - a.updatedAt || a.name.localeCompare(b.name));
@@ -50,27 +60,34 @@ function PreferencesAction() {
 }
 
 function SessionList({ notice }: { notice?: string }) {
-  const feed = useHub();
+  const feed = useBridges();
   const { push } = useNavigation();
+  const discovered = useRef(false);
+  useEffect(() => {
+    if (!feed.loading && !feed.error && feed.savedCount === 0 && feed.defaultUnavailable && !discovered.current) {
+      discovered.current = true;
+      push(<DiscoverBridges onConnected={feed.reconnect} />);
+    }
+  }, [feed.loading, feed.error, feed.savedCount, feed.defaultUnavailable, push, feed.reconnect]);
+  const discoverAction = <Action.Push title="Find Forwarded Bridges" icon={Icon.MagnifyingGlass} target={<DiscoverBridges onConnected={feed.reconnect} />} />;
   const setupAction = <Action.Push title="Connection Setup" icon={Icon.Plus} shortcut={{ modifiers: ["cmd"], key: "n" }} target={<Setup onConnected={feed.reconnect} />} />;
   const actions = <ActionPanel>
+    {discoverAction}
     {setupAction}
     <Action title="Refresh Sessions" icon={Icon.ArrowClockwise} shortcut={{ modifiers: ["cmd"], key: "r" }} onAction={feed.reconnect} />
     <PreferencesAction />
   </ActionPanel>;
-  const unavailable = Boolean(feed.error || feed.connection === "offline");
-  const sessions = orderedSessions(feed.sessions);
-  return <List isLoading={feed.loading} navigationTitle={`Argo · ${feed.profileName}`} searchBarPlaceholder="Find a session, project, machine, or Agent" actions={actions}>
-    <List.EmptyView title="No Matching Sessions" description="Try the session name, project, or machine. Clear search to connect another Agent." icon={Icon.MagnifyingGlass} />
+  const sessions = orderedSessions(feed.bridges.flatMap(bridge => bridge.sessions.map(session => ({ ...session, online: session.online && bridge.connection !== "offline" && !bridge.error, bridge }))));
+  return <List isLoading={feed.loading} navigationTitle="Argo · All Sessions" searchBarPlaceholder="Find a session, project, machine, bridge, or Agent" actions={actions}>
+    <List.EmptyView title="No Matching Sessions" description="Try the session name, project, machine, or bridge. Clear search to connect another Agent." icon={Icon.MagnifyingGlass} />
     {notice ? <List.Item id="recent-notice" title={notice} icon={Icon.Info} actions={actions} /> : null}
-    {unavailable ? <List.Item id="connection-recovery" title="Reconnect Your Bridge" subtitle={feed.error || "Hub offline — sessions may be out of date"}
-      icon={{ source: Icon.Warning, tintColor: Color.Orange }} actions={actions} /> : null}
-    {!sessions.length && !feed.loading && !unavailable ? <List.Item id="no-sessions" title="No Agents Connected Yet" subtitle="Connect an existing terminal Agent to get started" icon={Icon.Terminal} actions={actions} /> : null}
+    {feed.error ? <List.Item id="connection-recovery" title="Saved Bridges Need Attention" subtitle={feed.error} icon={Icon.Warning} actions={actions} /> : null}
+    {!sessions.length && !feed.loading ? <List.Item id="no-sessions" title="No Agents Connected Yet" subtitle="Find a forwarded server bridge or connect an existing terminal Agent" icon={Icon.Terminal} actions={actions} /> : null}
     {["Needs Attention", "Online", "Offline"].map((group) => {
       const entries = sessions.filter((session) => sessionGroup(session) === group);
       return entries.length ? <List.Section key={group} title={group} subtitle={`${entries.length} session${entries.length === 1 ? "" : "s"}`}>
-        {entries.map((session) => <List.Item key={session.id} id={session.id} title={title(session)}
-          subtitle={`${project(session)} · ${session.machine}`} keywords={[session.machine, session.adapter, session.name, session.cwd]}
+        {entries.map((session) => <List.Item key={`${session.bridge.profile.id}:${session.id}`} id={`${session.bridge.profile.id}:${session.id}`} title={title(session)}
+          subtitle={`${project(session)} · ${session.machine} · ${session.bridge.profile.name}`} keywords={[session.machine, session.adapter, session.name, session.cwd, session.bridge.profile.name]}
           icon={{ source: Icon.Terminal, tintColor: statusColor(session) }}
           accessories={[
             { text: session.adapter === "claude" ? "Claude" : "Codex" },
@@ -78,15 +95,21 @@ function SessionList({ notice }: { notice?: string }) {
             { tag: { value: sessionStatus(session), color: statusColor(session) } },
           ]}
           actions={<ActionPanel>
-            <Action title={session.revoked ? "Session Unbound — Open Details" : "Open Conversation"} icon={Icon.Message} onAction={() => push(<Conversation bindingId={session.id} connectionKey={feed.connectionKey} />)} />
+            <Action title={session.revoked ? "Session Unbound — Open Details" : "Open Conversation"} icon={Icon.Message} onAction={() => push(<Conversation bindingId={session.id} profileId={session.bridge.profile.id} connectionKey={session.bridge.connectionKey} />)} />
+            {discoverAction}
             {setupAction}
             <Action title="Refresh Sessions" icon={Icon.ArrowClockwise} shortcut={{ modifiers: ["cmd"], key: "r" }} onAction={feed.reconnect} />
             <PreferencesAction />
           </ActionPanel>} />)}
       </List.Section> : null;
     })}
-    <List.Section title="Connections" subtitle={feed.address}>
-      <List.Item id="connect-agent" title="Connect Agent…" subtitle="Pair an existing Agent or manage bridge connections" icon={Icon.Plus} keywords={["setup", "pair", "connect", "bridge"]} actions={actions} />
+    <List.Section title="Connections" subtitle="All saved bridges · Credentials stay in private files">
+      {feed.bridges.map(bridge => <List.Item key={bridge.profile.id} id={`bridge:${bridge.profile.id}`} title={bridge.profile.name}
+        subtitle={bridge.error || bridge.address || "Checking private configuration…"}
+        icon={{ source: bridge.error || bridge.connection === "offline" ? Icon.Warning : Icon.Network, tintColor: bridge.connection === "live" && !bridge.error ? Color.Green : Color.Orange }}
+        accessories={[{ tag: bridge.error || bridge.connection === "offline" ? "Unavailable" : bridge.loading || bridge.connection === "connecting" ? "Connecting" : "Connected" }]} actions={actions} />)}
+      <List.Item id="find-bridges" title="Find Forwarded Bridges" subtitle="Scan forwarded ports or copy server setup instructions" icon={Icon.MagnifyingGlass} actions={actions} />
+      <List.Item id="connect-agent" title="Connect Agent…" subtitle="Pair an existing Agent or manage bridge connections" icon={Icon.Plus} keywords={["setup", "pair", "connect", "bridge"]} actions={<ActionPanel>{setupAction}{discoverAction}<PreferencesAction /></ActionPanel>} />
     </List.Section>
   </List>;
 }
@@ -204,8 +227,8 @@ export function sendUnavailable(session: Session | undefined, live: boolean): st
   if (!session.capabilities.send) return "This Agent connection cannot receive messages. Your draft is kept.";
 }
 
-function Conversation({ bindingId, connectionKey }: { bindingId: string; connectionKey?: string }) {
-  const feed = useHub(bindingId);
+function Conversation({ bindingId, profileId, connectionKey }: { bindingId: string; profileId: string; connectionKey?: string }) {
+  const feed = useHub(bindingId, profileId, connectionKey);
   const { push } = useNavigation();
   const [identity, setIdentity] = useState(connectionKey);
   if (!identity && feed.connectionKey) setIdentity(feed.connectionKey);
@@ -230,8 +253,11 @@ function Conversation({ bindingId, connectionKey }: { bindingId: string; connect
   useEffect(() => { setOlder([]); setMore(undefined); }, [generation, identity]);
   useEffect(() => {
     if (!identity || connectionChanged || !session || session.revoked) return;
-    void LocalStorage.setItem(recentKey(identity), bindingId).catch(() => showToast({ style: Toast.Style.Failure, title: "Could not save the recent session" }));
-  }, [bindingId, identity, connectionChanged, session?.generation]);
+    void Promise.all([
+      LocalStorage.setItem(recentKey(identity), bindingId),
+      LocalStorage.setItem(LAST_CONVERSATION_KEY, JSON.stringify({ profileId, bindingId, connectionKey: identity })),
+    ]).catch(() => showToast({ style: Toast.Style.Failure, title: "Could not save the recent session" }));
+  }, [bindingId, profileId, identity, connectionChanged, session?.generation]);
 
   async function run(operation: () => Promise<void>, success: string): Promise<boolean> {
     if (lock.current) {
@@ -270,10 +296,11 @@ function Conversation({ bindingId, connectionKey }: { bindingId: string; connect
       sendAttempt.current = { id: randomUUID(), text, generation: session.generation };
     }
     const attempt = sendAttempt.current;
+    const client = feed.hub.current!;
     const sent = await run(() => {
       // Arm before I/O: a reply can arrive through the subscription before POST resolves.
       setSelection((previous) => conversationSelection(previous, { type: "send", messageId: attempt.id }));
-      return feed.hub.current!.mutate(bindingId, "/messages", {
+      return client.mutate(bindingId, "/messages", {
         messageId: attempt.id, generation: attempt.generation, text,
       });
     }, session.status === "ready" ? "Message queued for Agent" : "Queued — waiting for Agent");
@@ -326,6 +353,11 @@ function Conversation({ bindingId, connectionKey }: { bindingId: string; connect
       draft.change("");
       try {
         if (identity && await LocalStorage.getItem<string>(recentKey(identity)) === bindingId) await LocalStorage.removeItem(recentKey(identity));
+        const raw = await LocalStorage.getItem<string>(LAST_CONVERSATION_KEY);
+        if (raw) {
+          const saved = parseLastConversation(raw);
+          if (saved.profileId === profileId && saved.bindingId === bindingId && saved.connectionKey === identity) await LocalStorage.removeItem(LAST_CONVERSATION_KEY);
+        }
       } catch { await showToast({ style: Toast.Style.Failure, title: "Unbound, but could not clear the recent binding" }); }
     }
   }
@@ -427,32 +459,47 @@ function Conversation({ bindingId, connectionKey }: { bindingId: string; connect
   </List>;
 }
 
-export function SessionCommand({ bindingId, recent }: Context) {
-  const [target, setTarget] = useState<{ bindingId: string; connectionKey?: string } | undefined>(bindingId ? { bindingId } : undefined);
-  const [loading, setLoading] = useState(Boolean(recent && !bindingId));
+export function SessionCommand({ bindingId, profileId, connectionKey: expectedKey, recent = true }: Context) {
+  const [target, setTarget] = useState<ConversationTarget>();
+  const [loading, setLoading] = useState(Boolean(recent || bindingId));
   const [notice, setNotice] = useState<string>();
-  const { configPath } = getPreferenceValues<{ configPath?: string }>();
+  const { configPath, portStart, portEnd } = getPreferenceValues<{ configPath?: string; portStart?: string; portEnd?: string }>();
   useEffect(() => {
-    if (!recent || bindingId) return;
+    if (!recent && !bindingId) return;
     let active = true;
     let hub: Hub | undefined;
     setLoading(true);
+    setTarget(undefined);
     void (async () => {
       try {
-        const { config, connectionKey } = await loadConnection(LocalStorage, configPath);
-        const key = recentKey(connectionKey);
-        const saved = await LocalStorage.getItem<string>(key);
+        if (bindingId && !profileId) {
+          setNotice("Session Link Has No Bridge — Choose the Intended Session Below");
+          return;
+        }
+        const raw = !bindingId ? await LocalStorage.getItem<string>(LAST_CONVERSATION_KEY) : undefined;
         if (!active) return;
-        if (!saved) { setNotice("No Recent Session on This Bridge — Choose One Below"); return; }
+        const saved = raw ? parseLastConversation(raw) : undefined;
+        const selectedId = saved?.profileId ?? profileId;
+        const loaded = await loadConnection(LocalStorage, configPath, selectedId, portRange(portStart, portEnd));
+        if (!active) return;
+        const { config, connectionKey, profile } = loaded;
+        if ((saved?.connectionKey ?? expectedKey) && (saved?.connectionKey ?? expectedKey) !== connectionKey) {
+          setNotice("Recent Bridge Identity Changed — Choose a Session Below");
+          return;
+        }
+        const id = bindingId ?? saved?.bindingId ?? await LocalStorage.getItem<string>(recentKey(connectionKey));
+        if (!active) return;
+        if (!id) { setNotice("No Recent Session — Choose One Below"); return; }
         hub = new Hub(config);
         const { sessions } = await hub.sessions();
         if (!active) return;
-        if (!sessions.some((session) => session.id === saved && !session.revoked)) {
-          await LocalStorage.removeItem(key);
+        if (!sessions.some((session) => session.id === id && !session.revoked)) {
+          if (saved && await LocalStorage.getItem<string>(LAST_CONVERSATION_KEY) === raw) await LocalStorage.removeItem(LAST_CONVERSATION_KEY);
+          else if (!saved && !bindingId) await LocalStorage.removeItem(recentKey(connectionKey));
           if (active) setNotice("Recent Session No Longer Available — Choose Another");
           return;
         }
-        setTarget({ bindingId: saved, connectionKey });
+        setTarget({ bindingId: id, profileId: profile.id, connectionKey });
       } catch {
         if (active) setNotice("Could Not Open Recent Session — Reconnect or Choose Below");
       } finally {
@@ -461,9 +508,9 @@ export function SessionCommand({ bindingId, recent }: Context) {
       }
     })();
     return () => { active = false; hub?.close(); };
-  }, [bindingId, recent, configPath]);
+  }, [bindingId, profileId, expectedKey, recent, configPath, portStart, portEnd]);
   if (loading) return <List isLoading navigationTitle="Argo · Recent Session" />;
-  return target ? <Conversation key={`${target.connectionKey || "current"}:${target.bindingId}`} {...target} /> : <SessionList notice={notice} />;
+  return target ? <Conversation key={`${target.profileId}:${target.connectionKey}:${target.bindingId}`} {...target} /> : <SessionList notice={notice} />;
 }
 
 export default function Sessions(props: LaunchProps<{ launchContext: Context }>) {

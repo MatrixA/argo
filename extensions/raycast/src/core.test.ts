@@ -121,7 +121,7 @@ function viewHarness() {
       Detail: Object.assign(member("Detail"), { Metadata }),
       Form: Object.assign(member("Form"), { Description: "Description", TextArea: "TextArea" }),
       ActionPanel: "ActionPanel", Action: Object.assign(member("Action"), { Push: "Push", SubmitForm: "SubmitForm", CopyToClipboard: "CopyToClipboard", Style: {} }),
-      PreferencesAction: "PreferencesAction", Setup: "Setup", SessionList: "SessionList", Compose: "Compose", Conversation: "Conversation",
+      PreferencesAction: "PreferencesAction", Setup: "Setup", DiscoverBridges: "DiscoverBridges", SessionList: "SessionList", Compose: "Compose", Conversation: "Conversation",
       Toast: { Style: { Failure: "failure", Success: "success" } }, safeMarkdown, HubError,
     },
   };
@@ -192,7 +192,7 @@ test("conversation initializes empty and user-only snapshots once without steali
 test("remote setup prompt keeps names as data and clearly discloses pull handoff",()=>{
   const code="ARGO-"+"a".repeat(32);
   const prompt=remotePrompt("backend\nnot a shell command","http://127.0.0.1:49123",code);
-  assert.ok(prompt.includes("https://github.com/MatrixA/argo/blob/v0.1.2/docs/connect.md"));
+  assert.ok(prompt.includes("https://github.com/MatrixA/argo/blob/v0.1.3/docs/connect.md"));
   assert.ok(prompt.includes(JSON.stringify("backend\nnot a shell command")));
   assert.ok(prompt.includes(code));assert.match(prompt,/waiting occupies this session/);assert.match(prompt,/stdin/);
   assert.throws(()=>remotePrompt("backend","https://public.example",code));
@@ -235,20 +235,43 @@ test("session groups, labels and activity ordering distinguish attention from of
   assert.equal(sessions[0]!.id, "offline", "sorting must not mutate the live feed");
 });
 
-test("session list always exposes Connect Agent and bridge recovery outside the action menu", () => {
+test("session list disambiguates identical ids on different bridges and always exposes discovery and failed bridges", () => {
   const harness = viewHarness();
-  const feed = { sessions: [sessionFixture()], connection: "live", loading: false, connectionKey: "bridge-a", profileName: "Work", reconnect() {} };
+  const pushed: View[] = [];
+  const bridge = (id: string) => ({ profile: { id, name: id }, sessions: [sessionFixture()], connection: "live", connectionKey: `key-${id}` });
+  const feed = { bridges: [bridge("work"), bridge("server"), { ...bridge("failed"), sessions: [], connection: "offline", error: "Bridge unavailable" }], loading: false, savedCount: 3, reconnect() {} };
   const { SessionList } = viewLogic(["project", "title", "sessionStatus", "sessionGroup", "orderedSessions", "statusColor", "SessionList"], {
-    ...harness.globals, useHub: () => feed, useNavigation: () => ({ push() {} }),
+    ...harness.globals, useBridges: () => feed, useNavigation: () => ({ push: (view: View) => pushed.push(view) }),
   });
   const items = views(SessionList({}));
   assert.ok(items.some((item) => item.props.id === "connect-agent"));
-  const session = items.find((item) => item.props.id === "session")!;
-  assert.equal(session.props.title, "Backend");
-  assert.equal(session.props.subtitle, "backend · work-mac");
-  assert.equal(session.props.accessories[1].tooltip, `Latest activity: ${new Date(1).toLocaleString()}`);
-  feed.connection = "offline";
-  assert.ok(views(SessionList({})).some((item) => item.props.id === "connection-recovery"));
+  assert.ok(items.some((item) => item.props.title === "Find Forwarded Bridges"));
+  assert.ok(items.some((item) => item.props.id === "bridge:failed" && item.props.accessories[0].tag === "Unavailable"));
+  for (const id of ["work", "server"]) {
+    const session = items.find((item) => item.props.id === `${id}:session`)!;
+    assert.equal(session.props.title, "Backend");
+    assert.equal(session.props.subtitle, `backend · work-mac · ${id}`);
+    assert.equal(session.props.accessories[1].tooltip, `Latest activity: ${new Date(1).toLocaleString()}`);
+    views(session).find(item => item.props.title === "Open Conversation")!.props.onAction();
+    assert.equal(pushed.at(-1)!.props.profileId, id);
+    assert.equal(pushed.at(-1)!.props.connectionKey, `key-${id}`);
+    assert.equal(pushed.at(-1)!.props.bindingId, "session");
+  }
+});
+
+test("brand-new Mac opens discovery once, but saved/offline bridges never force setup", () => {
+  for (const scenario of ["new", "saved", "working", "invalid"] as const) {
+    const harness = viewHarness();
+    const pushed: View[] = [];
+    const feed = { bridges: [], loading: false, savedCount: scenario === "saved" ? 1 : 0, defaultUnavailable: scenario !== "working", error: scenario === "invalid" ? "Settings error" : undefined, reconnect() {} };
+    const { SessionList } = viewLogic(["project", "title", "sessionStatus", "sessionGroup", "orderedSessions", "statusColor", "SessionList"], {
+      ...harness.globals, useBridges: () => feed, useNavigation: () => ({ push: (view: View) => pushed.push(view) }),
+    });
+    SessionList({}); harness.effects.at(-1)!();
+    harness.reset(); SessionList({}); harness.effects.at(-1)!();
+    assert.equal(pushed.length, scenario === "new" ? 1 : 0);
+    if (scenario === "new") assert.equal(pushed[0]!.type, "DiscoverBridges");
+  }
 });
 
 test("message labels explain queueing, receiving, processing and uncertain results without claiming completion", () => {
@@ -275,8 +298,8 @@ test("offline conversation keeps Compose, copy and Jump to Latest Reply availabl
     ...harness.globals, useHub: () => feed, useDraft: (binding: string, identity: string) => { assert.equal(binding, "session"); assert.equal(identity, "bridge-a"); return draft; },
     useNavigation: () => ({ push: (view: View) => pushed.push(view) }), showToast: async (toast: unknown) => { toasts.push(toast); },
   });
-  let tree = Conversation({ bindingId: "session", connectionKey: "bridge-a" });
-  harness.reset(); tree = Conversation({ bindingId: "session", connectionKey: "bridge-a" });
+  let tree = Conversation({ bindingId: "session", profileId: "server", connectionKey: "bridge-a" });
+  harness.reset(); tree = Conversation({ bindingId: "session", profileId: "server", connectionKey: "bridge-a" });
   const items = views(tree);
   assert.equal(tree.props.selectedItemId, "reply", "offline warning must not replace the latest response");
   assert.ok(!items.some((item) => item.props.id === "status"), "there is no default status row");
@@ -291,7 +314,7 @@ test("offline conversation keeps Compose, copy and Jump to Latest Reply availabl
   feed.connectionKey = "bridge-b";
   feed.connection = "live";
   harness.reset();
-  tree = Conversation({ bindingId: "session", connectionKey: "bridge-a" });
+  tree = Conversation({ bindingId: "session", profileId: "server", connectionKey: "bridge-a" });
   assert.ok(!views(tree).some((item) => item.props.id === "reply"), "a different bridge's snapshot is never mixed into the pinned conversation");
   assert.equal(await pushed[0]!.props.send("Offline draft"), false, "an already-open compose cannot send after changing bridge");
   assert.match(toasts.at(-1).message, /connection changed/);
@@ -327,51 +350,83 @@ test("Jump to Latest Reply returns from manual history without following unrelat
   assert.equal(select(state, { type: "snapshot", generation: "g1", messages: [...messages, { ...messages[1]!, id: "unrelated", createdAt: 5 }] }).selectedItemId, "latest");
 });
 
-test("recent session falls back visibly and clears only a missing or revoked connection-scoped recent", async () => {
-  for (const scenario of ["valid", "missing", "revoked", "offline", "none"] as const) {
+test("default command resumes the durable bridge reference, validates identity and falls back visibly without forgetting transient failures", async () => {
+  const key = "a".repeat(24), last = "last-conversation-v1";
+  for (const scenario of ["valid", "missing", "revoked", "offline", "removed", "changed", "malformed", "legacy", "none", "browse", "unscoped"] as const) {
     const harness = viewHarness();
-    const removed: string[] = [], reads: string[] = [];
-    let closed = false;
-    const { SessionCommand } = viewLogic(["SessionCommand"], {
-      ...harness.globals,
+    const removed: string[] = [], reads: string[] = [], loads: (string | undefined)[] = [];
+    const saved = JSON.stringify({ profileId: "server", bindingId: "session", connectionKey: key });
+    const data = new Map<string, string>(scenario === "legacy" ? [[`recent-binding:${key}`, "session"]] : ["none", "browse"].includes(scenario) ? [] : [[last, scenario === "malformed" ? "not json" : saved]]);
+    let closed = 0, constructed = 0;
+    const { SessionCommand } = viewLogic(["SessionCommand", "parseLastConversation"], {
+      ...harness.globals, LAST_CONVERSATION_KEY: last, portRange: () => [49120],
       getPreferenceValues: () => ({ configPath: "/synthetic/client.json" }),
-      loadConnection: async () => ({ config: { url: "http://127.0.0.1:1", token }, connectionKey: "bridge-a" }),
+      loadConnection: async (_storage: unknown, _path: string, id?: string) => {
+        loads.push(id);
+        if (scenario === "removed") throw new Error("Removed");
+        return { config: { url: "http://127.0.0.1:1", token }, profile: { id: id ?? "active-other" }, connectionKey: scenario === "changed" ? "b".repeat(24) : key };
+      },
       recentKey: (identity: string) => `recent-binding:${identity}`,
       LocalStorage: {
-        getItem: async (key: string) => { reads.push(key); return scenario === "none" ? undefined : "session"; },
-        removeItem: async (key: string) => { removed.push(key); },
+        getItem: async (name: string) => { reads.push(name); return data.get(name); },
+        removeItem: async (name: string) => { removed.push(name); data.delete(name); },
       },
       Hub: class {
+        constructor() { constructed++; }
         async sessions() {
           if (scenario === "offline") throw new Error("synthetic offline");
           return { sessions: scenario === "missing" ? [] : [sessionFixture({ revoked: scenario === "revoked" })] };
         }
-        close() { closed = true; }
+        close() { closed++; }
       },
     });
-    SessionCommand({ recent: true });
+    const props = scenario === "browse" ? { recent: false } : scenario === "unscoped" ? { bindingId: "session" } : {};
+    SessionCommand(props);
     harness.effects[0]!();
     await new Promise<void>((resolve) => setImmediate(resolve));
     harness.reset();
-    const result = SessionCommand({ recent: true });
-    assert.deepEqual(reads, ["recent-binding:bridge-a"]);
-    if (scenario === "valid") {
+    const result = SessionCommand(props);
+    if (["valid", "legacy"].includes(scenario)) {
       assert.equal(result.type, "Conversation");
-      assert.equal(result.props.connectionKey, "bridge-a");
+      assert.equal(result.props.connectionKey, key);
+      assert.equal(result.props.profileId, scenario === "valid" ? "server" : "active-other");
     } else {
       assert.equal(result.type, "SessionList");
-      assert.ok(result.props.notice, "fallback must explain why the recent session was not opened");
+      if (scenario !== "browse") assert.ok(result.props.notice, "fallback explains why resume failed");
     }
-    assert.deepEqual(removed, ["missing", "revoked"].includes(scenario) ? ["recent-binding:bridge-a"] : []);
-    assert.equal(closed, scenario !== "none", "temporary validation client is always closed");
+    if (["malformed", "browse", "unscoped"].includes(scenario)) assert.equal(loads.length, 0);
+    else assert.deepEqual(loads, [scenario === "legacy" || scenario === "none" ? undefined : "server"], "the active bridge cannot redirect a durable reference");
+    assert.deepEqual(removed, ["missing", "revoked"].includes(scenario) ? [last] : []);
+    assert.equal(closed, constructed, "temporary validation clients are always closed");
+    if (["offline", "removed", "changed"].includes(scenario)) assert.equal(data.get(last), saved);
+    if (!["legacy", "none", "browse"].includes(scenario)) assert.ok(!reads.includes(`recent-binding:${key}`), "durable references never fall through to another bridge's legacy recent");
   }
+});
+
+test("opening a valid conversation persists only its bridge, binding and nonsecret identity", async () => {
+  const harness = viewHarness();
+  const writes = new Map<string, string>();
+  const key = "a".repeat(24);
+  const feed = { snapshot: { session: sessionFixture(), messages: [], interactions: [] }, connection: "live", connectionKey: key, hub: { current: {} } };
+  const { Conversation } = viewLogic(["project", "title", "sessionStatus", "knownOnline", "messageStatus", "sendUnavailable", "conversationSelection", "Conversation"], {
+    ...harness.globals, LAST_CONVERSATION_KEY: "last-conversation-v1", recentKey: (identity: string) => `recent-binding:${identity}`,
+    useHub: (binding: string, profile: string, expected: string) => { assert.equal(binding, "session"); assert.equal(profile, "server"); assert.equal(expected, key); return feed; },
+    useDraft: () => ({ text: "", ready: true }), useNavigation: () => ({ push() {} }),
+    LocalStorage: { async setItem(name: string, value: string) { writes.set(name, value); } }, showToast() {},
+  });
+  Conversation({ bindingId: "session", profileId: "server", connectionKey: key });
+  harness.effects.forEach(effect => effect());
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.deepEqual(JSON.parse(writes.get("last-conversation-v1")!), { profileId: "server", bindingId: "session", connectionKey: key });
+  assert.equal(writes.get(`recent-binding:${key}`), "session");
+  assert.ok(!JSON.stringify([...writes]).includes(token));
 });
 
 
 test("Codex pairing prompt targets its exact existing shared runtime without Claude pull",()=>{
  const code="ARGO-"+"c".repeat(32);
  const prompt=remotePrompt("server-codex","http://127.0.0.1:49123",code,"codex");
- assert.match(prompt,/v0\.1\.2\/docs\/connect-codex\.md/);
+ assert.match(prompt,/v0\.1\.3\/docs\/connect-codex\.md/);
  assert.match(prompt,/CODEX_THREAD_ID/);assert.match(prompt,/--agent codex/);
  assert.match(prompt,/Do not guess from history/);assert.match(prompt,/experimental/);
  assert.ok(!prompt.includes("CLAUDE_SESSION_ID"));assert.ok(!prompt.includes("receive/reply loop"));

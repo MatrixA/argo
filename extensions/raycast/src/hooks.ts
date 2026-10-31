@@ -4,13 +4,16 @@ import type { Session, Snapshot } from "../../../packages/shared/src/protocol.js
 import { Hub, HubError } from "./core.js";
 import type { Connection } from "./core.js";
 
-import { loadConnection, onConnectionChange } from "./connections.js";
+import { loadConnection, onConnectionChange, profiles, type BridgeProfile } from "./connections.js";
+import { portRange } from "./discovery.js";
 export { recentKey } from "./connections.js";
 
 export const draftKey = (bindingId: string, identity?:string) => `draft:${identity??"unconfigured"}:${bindingId}`;
 export const errorText = (error: unknown) => error instanceof HubError ? error.message : "Cannot reach the local hub. Check Argo, the configuration path, and private file permissions (chmod 600).";
 
-export function useHub(bindingId?: string) {
+export function useHub(bindingId?: string, selectedProfileId?: string, expectedConnectionKey?: string) {
+  const stop = useRef<() => void>(() => undefined);
+  const [selected, setSelected] = useState<Awaited<ReturnType<typeof loadConnection>>>();
   const [connectionKey,setConnectionKey]=useState<string>();
   const [profileName,setProfileName]=useState("Bridge");
   const [address,setAddress]=useState<string>();
@@ -23,12 +26,13 @@ export function useHub(bindingId?: string) {
   const hub = useRef<Hub | undefined>(undefined);
   const refreshRef = useRef<() => Promise<void>>(async () => undefined);
   const [attempt, setAttempt] = useState(0);
-  const { configPath } = getPreferenceValues<{ configPath?: string }>();
+  const { configPath, portStart, portEnd } = getPreferenceValues<{ configPath?: string; portStart?: string; portEnd?: string }>();
 
   const reconnect = useCallback(() => {
+    stop.current();
     hub.current?.close();
     hub.current = undefined;
-    setConnection("connecting");setSnapshot(undefined);setConnectionKey(undefined);
+    setConnection("connecting");setSnapshot(undefined);setConnectionKey(undefined);setSelected(undefined);
     setAttempt((value) => value + 1);
   }, []);
   useEffect(() => onConnectionChange(reconnect), [reconnect]);
@@ -40,8 +44,14 @@ export function useHub(bindingId?: string) {
     let pending: Promise<number> | undefined;
     let again = false;
     let lastCursor = 0;
+    const cleanup = () => {
+      controller.abort(); client?.close();
+      if (debounce) clearTimeout(debounce);
+      if (hub.current === client) hub.current = undefined;
+    };
+    stop.current = cleanup;
     setLoading(true);
-    setSnapshot(undefined);setSessions([]);setConnectionKey(undefined);setAddress(undefined);
+    setSnapshot(undefined);setSessions([]);setConnectionKey(undefined);setAddress(undefined);setSelected(undefined);
     setConnection("connecting");
     setError(undefined);
     async function load(): Promise<number> {
@@ -75,8 +85,15 @@ export function useHub(bindingId?: string) {
     refreshRef.current = refresh;
     async function start() {
       try {
-        const {config,profile,connectionKey:key} = await loadConnection(LocalStorage,configPath);
+        const loaded = await loadConnection(LocalStorage,configPath,selectedProfileId,portRange(portStart,portEnd));
         if (controller.signal.aborted) return;
+        const {config,profile,connectionKey:key} = loaded;
+        if (expectedConnectionKey && key !== expectedConnectionKey) {
+          setError("Bridge identity changed. Open All Sessions to choose a connection; your original draft is kept.");
+          setConnection("offline");
+          return;
+        }
+        setSelected(loaded);
         setConnectionKey(key);setProfileName(profile.name);setProfileId(profile.id);setAddress(config.url);
         client = new Hub(config);
         hub.current = client;
@@ -94,16 +111,108 @@ export function useHub(bindingId?: string) {
       } finally { if (!controller.signal.aborted) setLoading(false); }
     }
     void start();
-    return () => {
-      controller.abort();
-      client?.close();
-      if (debounce) clearTimeout(debounce);
-      hub.current = undefined;
-    };
-  }, [bindingId, configPath, attempt]);
+    return cleanup;
+  }, [bindingId, selectedProfileId, expectedConnectionKey, configPath, portStart, portEnd, attempt]);
 
   const refresh = useCallback(async () => { await refreshRef.current(); }, []);
-  return { sessions, snapshot, connection, loading, error, hub, refresh, reconnect, connectionKey, profileName, profileId, address };
+  return { sessions, snapshot, connection, loading, error, hub, refresh, reconnect, connectionKey, profileName, profileId, address, selected };
+}
+
+export type BridgeFeed = {
+  profile: BridgeProfile;
+  connectionKey?: string;
+  address?: string;
+  sessions: Session[];
+  connection: Connection;
+  loading: boolean;
+  error?: string;
+};
+
+export function useBridges() {
+  const [bridges, setBridges] = useState<BridgeFeed[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string>();
+  const [savedCount, setSavedCount] = useState(0);
+  const [defaultUnavailable, setDefaultUnavailable] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const stop = useRef<() => void>(() => undefined);
+  const reconnect = useCallback(() => { stop.current(); setAttempt(value => value + 1); }, []);
+  const { configPath, portStart, portEnd } = getPreferenceValues<{ configPath?: string; portStart?: string; portEnd?: string }>();
+  useEffect(() => onConnectionChange(reconnect), [reconnect]);
+  useEffect(() => {
+    const controller = new AbortController();
+    const clients = new Set<Hub>();
+    const timers = new Set<ReturnType<typeof setTimeout>>();
+    const cleanup = () => { controller.abort(); clients.forEach(client => client.close()); timers.forEach(clearTimeout); };
+    stop.current = cleanup;
+    setBridges([]); setLoading(true); setError(undefined); setDefaultUnavailable(false);
+    const update = (id: string, change: Partial<BridgeFeed>) => {
+      if (!controller.signal.aborted) setBridges(current => current.map(bridge => bridge.profile.id === id ? { ...bridge, ...change } : bridge));
+    };
+    async function start(profile: BridgeProfile) {
+      let client: Hub | undefined;
+      let configured = false;
+      let cursor = 0;
+      let pending: Promise<number> | undefined;
+      let again = false;
+      let debounce: ReturnType<typeof setTimeout> | undefined;
+      async function load(): Promise<number> {
+        if (pending) { again = true; return pending; }
+        pending = (async () => {
+          do {
+            again = false;
+            if (!client || controller.signal.aborted) return cursor;
+            const result = await client.sessions();
+            cursor = result.cursor;
+            update(profile.id, { sessions: result.sessions, error: undefined });
+          } while (again && !controller.signal.aborted);
+          return cursor;
+        })();
+        try { return await pending; }
+        catch (cause) { update(profile.id, { error: errorText(cause) }); throw cause; }
+        finally { pending = undefined; }
+      }
+      try {
+        const loaded = await loadConnection(LocalStorage, configPath, profile.id, portRange(portStart, portEnd));
+        if (controller.signal.aborted) return;
+        configured = true;
+        update(profile.id, { connectionKey: loaded.connectionKey, address: loaded.config.url });
+        client = new Hub(loaded.config); clients.add(client);
+        const initial = await load();
+        if (controller.signal.aborted) return;
+        update(profile.id, { loading: false });
+        // Each bridge watches its own cursor; a failed bridge never gates its siblings.
+        void client.watch(initial, controller.signal, () => {
+          if (debounce || controller.signal.aborted) return;
+          debounce = setTimeout(() => {
+            timers.delete(debounce!); debounce = undefined;
+            void load().catch(() => undefined);
+          }, 200);
+          timers.add(debounce);
+        }, load, connection => update(profile.id, { connection })).catch(cause => update(profile.id, { connection: "offline", error: errorText(cause) }));
+      } catch (cause) {
+        if (controller.signal.aborted) return;
+        if (profile.id === "default" && !configured) {
+          setDefaultUnavailable(true);
+          setBridges(current => current.filter(bridge => bridge.profile.id !== "default"));
+        } else update(profile.id, { connection: "offline", error: errorText(cause), loading: false });
+        client?.close();
+      }
+    }
+    void (async () => {
+      try {
+        const saved = await profiles(LocalStorage);
+        if (controller.signal.aborted) return;
+        setSavedCount(saved.length);
+        const entries = [...saved, { id: "default", name: "Default bridge", configPath: configPath?.trim() || "~/.argo/client.json" }];
+        setBridges(entries.map(profile => ({ profile, sessions: [], connection: "connecting", loading: true })));
+        await Promise.all(entries.map(start));
+      } catch { if (!controller.signal.aborted) setError("Could not read saved bridges. Open Connection Setup to repair saved references."); }
+      finally { if (!controller.signal.aborted) setLoading(false); }
+    })();
+    return cleanup;
+  }, [configPath, portStart, portEnd, attempt]);
+  return { bridges, loading, error, savedCount, defaultUnavailable, reconnect };
 }
 
 export function useDraft(bindingId: string, identity?:string) {

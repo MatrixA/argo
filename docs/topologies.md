@@ -4,6 +4,10 @@ Choose the machine for the **bridge**, then supply the address visible from **ea
 
 Argo stays loopback-only. SSH carries the existing authenticated HTTP/WebSocket protocol; there is no public web relay, new TLS proxy, public listener, or extra reply port. GitHub distributes runtime code, never conversations.
 
+## Fresh server, ordinary Port Forwarding
+
+For an uninstalled remote Agent, start at [server-setup.md](server-setup.md). It installs the pinned runtime without a prior URL, starts/reuses a server bridge, and returns a server port plus a short-lived Mac pairing code. Forward the server port into Mac loopback 49120–49139, then use **Find Forwarded Server Bridges**. Signed discovery and first-use pairing replace manual address entry/admin-file import. Multiple paired servers appear together. No Remote Forward is required. Old bridge/manual topology paths below remain supported; discovery requires the new runtime.
+
 ## Start with the current Claude session
 
 In Raycast, open **Argo → Agent Sessions → Connection Setup**. First select or add a working bridge, then choose where your Agent runs. **Use an Existing Bridge** asks for a private configuration **file path**, not a pasted token, and **Address From This Mac**. **Test and Use Connection** verifies authenticated access before switching. Saved bridge profiles contain names, file paths and per-Mac loopback address overrides only; credentials stay in private files. Removing a saved connection removes that reference, not the bridge or its data.
@@ -44,7 +48,7 @@ Or use the [pinned public installer](connect.md#1-download-the-standalone-pinned
 
 `serve` creates a private admin configuration at `$ARGO_HOME/client.json` (default `~/.argo/client.json`) and a local database. Keep that original file on the bridge machine. Do not replace it to change what a tunnel looks like from another machine. For a second independent bridge, use a different `ARGO_HOME` and port.
 
-**Release scope:** the public runtime installer is pinned to `v0.1.2`, including `doctor`, `export-client` and `--agent codex`. Load the Raycast connection wizard from this checkout. Native Codex populated-session rejoin remains experimental.
+**Release scope:** the public runtime installer is pinned to `v0.1.3`, including `doctor`, `export-client` and `--agent codex`. Load the Raycast connection wizard from this checkout. Native Codex populated-session rejoin remains experimental.
 
 ## 1. Everything on your Mac
 
