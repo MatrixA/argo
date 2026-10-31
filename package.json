@@ -1,0 +1,38 @@
+{
+  "name": "argo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "workspaces": [
+    "extensions/raycast"
+  ],
+  "bin": {
+    "argo": "bin/argo.mjs"
+  },
+  "scripts": {
+    "argo": "tsx packages/connector/src/cli.ts",
+    "start": "tsx packages/connector/src/cli.ts serve",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit && npm run typecheck --workspace extensions/raycast",
+    "test": "npm run build && tsx --test test/*.test.ts",
+    "raycast:build": "npm run build --workspace extensions/raycast",
+    "smoke": "npm run build && tsx scripts/smoke.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "ws": "^8.18.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/ws": "^8.18.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.8.0"
+  },
+  "overrides": {
+    "minimatch": "^11.0.1"
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "$schema": "https://www.raycast.com/schemas/extension.json",
+  "name": "argo",
+  "title": "Argo",
+  "description": "Continue your explicitly bound terminal agent sessions through a private local hub.",
+  "icon": "icon.png",
+  "author": "fernando_jacob",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "categories": ["Developer Tools", "Productivity"],
+  "commands": [
+    {
+      "name": "sessions",
+      "title": "Agent Sessions",
+      "subtitle": "Argo",
+      "description": "Browse bound sessions, send messages, and respond to agent requests.",
+      "mode": "view"
+    },
+    {
+      "name": "recent",
+      "title": "Recent Agent Session",
+      "subtitle": "Argo",
+      "description": "Continue the last session opened in Argo.",
+      "mode": "view"
+    }
+  ],
+  "preferences": [
+    {
+      "name": "configPath",
+      "title": "Client Configuration File",
+      "description": "Private JSON file containing the local hub URL and token. Defaults to ~/.argo/client.json. Credentials are never stored in Raycast preferences.",
+      "type": "textfield",
+      "required": false,
+      "placeholder": "~/.argo/client.json"
+    }
+  ],
+  "scripts": {
+    "build": "ray build",
+    "dev": "ray develop",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test src/core.test.ts"
+  },
+  "dependencies": {
+    "@raycast/api": "^2.10.1",
+    "react": "^19.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0"
+  }
+}
