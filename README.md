@@ -20,7 +20,7 @@ Give the existing Agent this public entry point: [server-setup.md](docs/server-s
 
 The Agent prints its complete server endpoint, such as `http://127.0.0.1:49120`, on its own line in terminal output and the final response, plus a short-lived **Mac pairing code**. VS Code can detect the terminal URL when automatic forwarding is enabled. Confirm the actual Mac mapping in its Ports view; otherwise use Forward a Port manually. Forward that port with ordinary Local Port Forwarding (for example VS Code Ports) into an unused **Mac loopback port 49120–49139**. Open Argo's **Find Forwarded Server Bridges**, select the discovered identity, and enter the code once. No Remote Forward, bridge-address entry or admin-file transfer is needed. Port forwarding is still necessary and is not automatically created by installing the extension. Discovery range is configurable, with a maximum of 64 loopback ports.
 
-Discovery is credential-free and checks a fresh signed challenge. Pairing pins the public bridge identity from the user-provided code before consuming it. The Mac stores its independent durable client credential in a private file, not preferences or LocalStorage. Discovery alone never authorizes a connection. After pairing, all configured bridges' sessions are aggregated. Opening Argo resumes the last valid conversation; All Sessions switches targets. Pinned bridge identity keeps drafts/recent state stable when local forwarding ports change and prevents sending stored credentials to an unrelated discovered identity.
+Discovery is credential-free and checks a fresh signed challenge. Pairing pins the public bridge identity from the user-provided code before consuming it. The Mac stores its independent durable client credential in a private file, not preferences or LocalStorage. Discovery alone never authorizes a connection. After pairing, all configured bridges' sessions are aggregated. Opening Argo resumes the last valid conversation; All Sessions switches targets. Pinned bridge identity keeps drafts/recent state stable when local forwarding ports change and rejects an unrelated discovered identity. It does not authenticate the local transport: a malicious proxy can relay a genuine discovery signature and observe bearer credentials. Use only trusted local listeners and SSH forwards, never shared/public forwarding endpoints.
 
 Same-user Agents on one server share one bridge. Multiple servers may use the same server port but require different mapped Mac ports. The new bridge and connectors use supported tool-managed background execution; they are not silently installed as launchd/systemd services. For server-side recovery, `client-invite` refreshes a Mac invitation and `revoke-clients` revokes all paired Mac clients without replacing the server's admin configuration. Removing a local saved profile is not revocation.
 
@@ -41,6 +41,8 @@ Run these commands on the chosen bridge machine. The service listens only on `ht
 Use `ARGO_HOME=/private/path` to isolate an installation, or `serve --port PORT` for another port. An existing installation cannot silently change its address. The CLI uses a lock to prevent concurrent bridge processes. After an abnormal exit, check the PID in `bridge.lock` before removing a stale lock. Connector `.lock` files require the same check.
 
 ### Load the Raycast extension
+
+The extension is being prepared for the public Raycast Store as a self-configured companion UI. See the [Store preparation and standalone build guide](docs/raycast-store.md). It has not been submitted or listed.
 
 ```sh
 npm run dev --workspace extensions/raycast
@@ -236,6 +238,8 @@ node bin/argo.mjs launchd > /private/path/local.argo.bridge.plist
 Inspect and install it using your normal launchd workflow. Template generation does not install, load, or restart a service. The template contains absolute Node and project paths, so regenerate it after moving the project or Node installation. `ARGO_HOME` is inherited at generation time through the template's environment configuration.
 
 ## Safety and recovery
+
+See the [security assessment and deployment boundaries](docs/security-review.md). Signed discovery is not encrypted transport or relay protection.
 
 - All control endpoints require authentication. Browser-origin requests, non-loopback addresses, redirects, and arbitrary public listeners are rejected.
 - Pairing creation and cancellation require bridge admin authentication. The native-only claim endpoint accepts a high-entropy, expiring, single-use code and returns only one scoped connector credential. Claim attempts are rate-limited and never bypass Host/Origin checks.

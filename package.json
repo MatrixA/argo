@@ -18,8 +18,9 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit && npm run typecheck --workspace extensions/raycast",
     "test": "npm run build && tsx --test test/*.test.ts",
-    "raycast:build": "npm run build --workspace extensions/raycast",
-    "smoke": "npm run build && tsx scripts/smoke.ts"
+    "raycast:build": "npm run typecheck --workspace extensions/raycast && npm exec --workspace extensions/raycast -- ray build",
+    "smoke": "npm run build && tsx scripts/smoke.ts",
+    "raycast:prepare-store": "node scripts/prepare-raycast-store.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

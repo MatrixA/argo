@@ -142,7 +142,7 @@ Choose **I already have a working connection** for an endpoint that is already f
 
 If the bridge already works over your SSH `LocalForward` or `RemoteForward`, keep it. The wizard's optional tunnel helper only generates a command to copy; it never opens connections or changes SSH settings. Enter the actual per-machine endpoints; different ports are normal. Use your normal SSH aliases for ports, keys, jump hosts and host-key verification. Never disable host-key checks.
 
-A tunnel only carries the protocol: bridge admin authentication and per-binding connector authentication remain required. An existing trusted transport must still present loopback HTTP endpoints. Argo does not add or configure a web relay or TLS proxy.
+A tunnel only carries the protocol: bridge admin authentication and per-binding connector authentication remain required. An existing trusted transport must still present loopback HTTP endpoints. Argo does not add or configure a web relay or TLS proxy. Signed discovery can pass through any byte-forwarding proxy and does not prove that proxy is trustworthy. A malicious proxy can observe HTTP bearer credentials. Use only your own trusted listener and authenticated SSH forwarding; do not use shared/public forwarded endpoints or treat loopback as isolation from other local users.
 
 ## Safe diagnosis and next steps
 

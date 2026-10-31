@@ -1,28 +1,63 @@
-import { localUrl } from "../../../packages/shared/src/protocol.js";
+import { localUrl } from "./protocol.js";
 export type SetupMode = "local" | "existing" | "mac-reverse" | "remote-local" | "server-forward";
-export const setupModes: Record<SetupMode, {
+export const setupModes: Record<
+  SetupMode,
+  {
     title: string;
     description: string;
     agentUrl: string;
     runOn: string;
-}> = {
-    local: { title: "Agent on this Mac", description: "Use the same bridge directly. No SSH tunnel is needed.", agentUrl: "http://127.0.0.1:48123", runOn: "No tunnel needed" },
-    existing: { title: "I already have a working connection", description: "Keep your existing tunnel or loopback proxy. Supply the address as seen by the Agent.", agentUrl: "http://127.0.0.1:49123", runOn: "Use your existing transport" },
-    "mac-reverse": { title: "Mac bridge · Mac connects to server", description: "Open a remote listener with SSH -R. The Agent reaches the bridge on your Mac.", agentUrl: "http://127.0.0.1:49123", runOn: "Run on your Mac" },
-    "remote-local": { title: "Mac bridge · Server connects to Mac", description: "Open a local listener on the server with SSH -L. The server needs SSH access to your Mac.", agentUrl: "http://127.0.0.1:49123", runOn: "Run on the Agent server" },
-    "server-forward": { title: "Server bridge · Mac connects to server", description: "Keep the bridge with your Agents. SSH -L exposes it locally to Raycast.", agentUrl: "http://127.0.0.1:48123", runOn: "Run on your Mac" },
+  }
+> = {
+  local: {
+    title: "Agent on this Mac",
+    description: "Use the same bridge directly. No SSH tunnel is needed.",
+    agentUrl: "http://127.0.0.1:48123",
+    runOn: "No tunnel needed",
+  },
+  existing: {
+    title: "I already have a working connection",
+    description: "Keep your existing tunnel or loopback proxy. Supply the address as seen by the Agent.",
+    agentUrl: "http://127.0.0.1:49123",
+    runOn: "Use your existing transport",
+  },
+  "mac-reverse": {
+    title: "Mac bridge · Mac connects to server",
+    description: "Open a remote listener with SSH -R. The Agent reaches the bridge on your Mac.",
+    agentUrl: "http://127.0.0.1:49123",
+    runOn: "Run on your Mac",
+  },
+  "remote-local": {
+    title: "Mac bridge · Server connects to Mac",
+    description: "Open a local listener on the server with SSH -L. The server needs SSH access to your Mac.",
+    agentUrl: "http://127.0.0.1:49123",
+    runOn: "Run on the Agent server",
+  },
+  "server-forward": {
+    title: "Server bridge · Mac connects to server",
+    description: "Keep the bridge with your Agents. SSH -L exposes it locally to Raycast.",
+    agentUrl: "http://127.0.0.1:48123",
+    runOn: "Run on your Mac",
+  },
 };
-export function tunnelCommand(mode: SetupMode, target: string, agentUrl: string, bridgeUrl: string, macUrl: string): string | undefined {
-    const agent = localUrl(agentUrl), bridge = localUrl(bridgeUrl), mac = localUrl(macUrl);
-    if (mode === "local" || mode === "existing")
-        return undefined;
-    if (!/^(?:[A-Za-z0-9_][A-Za-z0-9_.-]*@)?[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(target))
-        throw new Error("Use an SSH alias or user@host. Put ports, keys and jump hosts in SSH config.");
-    const listen = mode === "server-forward" ? mac : agent;
-    return `ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 ${mode === "mac-reverse" ? "-R" : "-L"} 127.0.0.1:${listen.port || 80}:${bridge.hostname}:${bridge.port || 80} -- ${target}`;
+export function tunnelCommand(
+  mode: SetupMode,
+  target: string,
+  agentUrl: string,
+  bridgeUrl: string,
+  macUrl: string,
+): string | undefined {
+  const agent = localUrl(agentUrl),
+    bridge = localUrl(bridgeUrl),
+    mac = localUrl(macUrl);
+  if (mode === "local" || mode === "existing") return undefined;
+  if (!/^(?:[A-Za-z0-9_][A-Za-z0-9_.-]*@)?[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(target))
+    throw new Error("Use an SSH alias or user@host. Put ports, keys and jump hosts in SSH config.");
+  const listen = mode === "server-forward" ? mac : agent;
+  return `ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 ${mode === "mac-reverse" ? "-R" : "-L"} 127.0.0.1:${listen.port || 80}:${bridge.hostname}:${bridge.port || 80} -- ${target}`;
 }
 export function setupAddress(mode: SetupMode, currentAddress?: string): string {
-    return mode === "local" ? (currentAddress ?? setupModes.local.agentUrl) : setupModes[mode].agentUrl;
+  return mode === "local" ? (currentAddress ?? setupModes.local.agentUrl) : setupModes[mode].agentUrl;
 }
 // Bundled so setup works before publishing new docs, and while GitHub is offline.
 export const setupGuide = `# Connect the Agent you already use

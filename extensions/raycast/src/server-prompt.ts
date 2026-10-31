@@ -1,4 +1,5 @@
-export const SERVER_SETUP_URL = "https://github.com/MatrixA/argo/blob/ab8250bdbcb6c626b21a5698efff0983c2260de8/docs/server-setup.md";
+export const SERVER_SETUP_URL =
+  "https://github.com/MatrixA/argo/blob/ab8250bdbcb6c626b21a5698efff0983c2260de8/docs/server-setup.md";
 export const serverSetupPrompt = `Read ${SERVER_SETUP_URL} and execute its cold-start server setup in THIS existing Agent session. Argo may not be installed and no bridge address or pairing code is required beforehand.
 Install the pinned public v0.1.3 runtime after inspecting the installer. Reuse or start an Argo bridge on this server, loopback-only, and connect this exact existing Agent session using its supported adapter. Never start another model/native daemon, resume a different session, inspect conversation logs, or weaken sandbox/approval policy. Request normal per-action approval when required.
 Use the tool's supported persistent background execution for Argo processes. Report installation, bridge startup and actual Agent registration separately. Stop honestly on unsupported prerequisites.
