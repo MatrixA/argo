@@ -43,6 +43,15 @@ test("discovery is bounded, signature verified, credential-free and pairs only a
     assert.equal(connectionIdentity(config),connectionIdentity({...config,url:"http://127.0.0.1:2"}));
     broken=true;await assert.rejects(loadConnection(storage,undefined,profile.id,[address.port]));assert.equal(authCalls,1,"wrong signature never receives stored token");
     assert.equal(clientCodeIdentity(code),bridgeId);assert.throws(()=>clientCodeIdentity("ARGO-"+"a".repeat(32)));
-    assert.match(serverSetupPrompt,/github.com\/MatrixA\/argo\/blob\/v0.1.3\/docs\/server-setup.md/);assert.match(serverSetupPrompt,/may not be installed/);
+    assert.match(serverSetupPrompt,/github.com\/MatrixA\/argo\/blob\/[a-f0-9]{40}\/docs\/server-setup.md/);assert.match(serverSetupPrompt,/may not be installed/);
   } finally { server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));await rm(directory,{recursive:true,force:true}); }
+});
+
+test("server handoff requires a standalone endpoint in terminal output and the final response", async () => {
+  const guide = await readFile(new URL("../../../docs/server-setup.md", import.meta.url), "utf8");
+  assert.ok(guide.includes("Print the exact `url` from `ARGO_SERVER_READY` on its own line"));
+  assert.ok(guide.includes("http://127.0.0.1:49120"));
+  assert.ok(guide.includes("terminal output and the final response"));
+  assert.ok(guide.includes("automatic forwarding is enabled"));
+  assert.match(serverSetupPrompt, /standalone.*http:\/\/127\.0\.0\.1:PORT/);
 });
