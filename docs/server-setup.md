@@ -126,7 +126,13 @@ This starts only the cooperative connector worker. Save its result and confirm a
 
 Do not stop at “installed.” Report bridge startup and Agent attachment separately, with failures and process lifetime accurately stated. Provide:
 
-1. **Server port** from `ARGO_SERVER_READY` and **public bridge identity**.
+1. **Server endpoint** and **public bridge identity**. Print the exact `url` from `ARGO_SERVER_READY` on its own line in both terminal output and the final response. For example, if the returned port is 49120:
+
+   ```text
+   http://127.0.0.1:49120
+   ```
+
+   Substitute the actual returned port, never blindly use the example. Use a normal tool command such as `printf '%s\n' 'http://127.0.0.1:49120'` with the actual endpoint so VS Code can see it in terminal output; do not rely only on Agent chat rendering or hidden background output. This public URL must contain no credentials, pairing code, query or fragment. Do not return only a bare port number, an inline code address or JSON. VS Code can detect this terminal URL when automatic forwarding is enabled; detection is not proof that forwarding succeeded. Check its Ports view for the actual Mac address. If automatic detection is disabled or unavailable, use Forward a Port manually without changing VS Code/SSH settings automatically.
 2. **Ordinary Local Port Forwarding** instruction: forward that server port to one unused **Mac loopback port in 49120–49139** using VS Code Ports or their existing SSH setup. Multiple servers may share a server port but need different Mac mapped ports. Keep listeners loopback-only. No Remote Forward is needed. Argo does not itself open a tunnel.
 3. **Mac pairing code** and expiry, privately. In Raycast open Argo, use **Find Forwarded Server Bridges**, select the matching discovered target and paste the code once. Raycast checks that the code embeds the discovered bridge identity, saves its own independent credential privately and remembers the server. No admin-file transfer is needed. Pairing grants access to this bridge's Agent sessions, not just one Agent.
 4. If the code expires or a claim is uncertain, run the installed launcher with `client-invite` on the bridge machine, using the same `ARGO_HOME`, to create a fresh code. That command prints only intentional short-lived pairing data, no durable token.
