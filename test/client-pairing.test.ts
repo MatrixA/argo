@@ -234,3 +234,37 @@ test("public bridge identity pinning is read-only, handles legacy state and reje
     } finally { db.close(); }
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
+
+test("revoked clients cannot finish a mutation whose body was still uploading", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "argo-client-revocation-")), admin = secret();
+  const bridge = await startBridge({ database: join(directory, "bridge.sqlite"), token: admin, port: 0 });
+  let pending: ReturnType<typeof httpRequest> | undefined;
+  try {
+    const client = await claim(bridge, (await invite(bridge, admin)).code);
+    let authenticated!: () => void;
+    const checked = new Promise<void>(resolve => { authenticated = resolve; });
+    const authenticate = bridge.store.authenticateClient.bind(bridge.store);
+    bridge.store.authenticateClient = token => {
+      const valid = authenticate(token);
+      if (token === client.token && valid) authenticated();
+      return valid;
+    };
+    const payload = JSON.stringify({ name: "must not be created", adapter: "claude" });
+    let started!: () => void;
+    const uploading = new Promise<void>(resolve => { started = resolve; });
+    const finished = new Promise<number>((resolve, reject) => {
+      pending = httpRequest(bridge.url + "/v1/grants", { method: "POST", headers: {
+        Authorization: `Bearer ${client.token}`, "Content-Type": "application/json", "Content-Length": Buffer.byteLength(payload),
+      } }, response => { response.resume(); resolve(response.statusCode!); });
+      pending.on("error", reject);
+      pending.write(payload.slice(0, -1), started);
+    });
+    await uploading;
+    await checked;
+    assert.equal((await request(bridge, "/v1/clients", "DELETE", undefined, admin)).status, 200);
+    pending!.end(payload.slice(-1));
+    assert.equal(await finished, 401);
+    assert.equal(bridge.store.list().length, 0);
+    assert.equal((await request(bridge, "/v1/grants", "POST", { name: "admin still works", adapter: "claude" }, admin)).status, 201);
+  } finally { pending?.destroy(); await bridge.close(); rmSync(directory, { recursive: true, force: true }); }
+});

@@ -40,6 +40,7 @@ export async function startBridge(options: BridgeOptions) {
     for await(const chunk of req) { length+=Buffer.byteLength(chunk); if(length>600_000) throw new Error("Request too large"); chunks.push(Buffer.from(chunk)); }
     return JSON.parse(Buffer.concat(chunks).toString("utf8"));
   }
+  const authenticationError = new Error("Authentication required");
   let claimWindow=Date.now(), claimCount=0;
   const server=createServer(async(req,res)=>{
     if(!boundary(req)) { json(res,403,{error:"Loopback native clients only"}); return; }
@@ -63,9 +64,15 @@ export async function startBridge(options: BridgeOptions) {
       const token=(req.headers.authorization??"").replace(/^Bearer /,"");
       const admin=sameSecret(token);
       if(!admin && !store.authenticateClient(token)) { json(res,401,{error:"Authentication required"}); return; }
+      const authorizedBody = async () => {
+        const input = await body(req);
+        // Body upload yields to revocation requests. Recheck before any mutation.
+        if(!admin && !store.authenticateClient(token)) throw authenticationError;
+        return input;
+      };
       if(req.method==="POST" && url.pathname==="/v1/client-pairings") {
         if(!admin) {json(res,403,{error:"Administrator authentication required"});return;}
-        z.object({}).strict().parse(await body(req));
+        z.object({}).strict().parse(await authorizedBody());
         json(res,201,store.createClientPairing());return;
       }
       if(req.method==="DELETE" && url.pathname==="/v1/clients") {
@@ -75,16 +82,16 @@ export async function startBridge(options: BridgeOptions) {
         json(res,200,{ok:true});return;
       }
       if(req.method==="POST" && url.pathname==="/v1/pairings") {
-        const input=z.object({name:z.string().trim().min(1).max(100),adapter:z.enum(["claude","codex"])}).strict().parse(await body(req));
+        const input=z.object({name:z.string().trim().min(1).max(100),adapter:z.enum(["claude","codex"])}).strict().parse(await authorizedBody());
         json(res,201,store.createPairing(input.name,input.adapter));return;
       }
       if(req.method==="DELETE" && url.pathname==="/v1/pairings") {
-        const input=z.object({code:pairingCodeSchema}).strict().parse(await body(req));
+        const input=z.object({code:pairingCodeSchema}).strict().parse(await authorizedBody());
         store.cancelPairing(input.code);json(res,200,{ok:true});return;
       }
       if(req.method==="GET" && url.pathname==="/v1/sessions") { json(res,200,{sessions:store.list(),cursor:store.cursor()}); return; }
       if(req.method==="POST" && url.pathname==="/v1/grants") {
-        const input=z.object({name:z.string().trim().min(1).max(100),adapter:z.enum(["claude","codex"])}).strict().parse(await body(req));
+        const input=z.object({name:z.string().trim().min(1).max(100),adapter:z.enum(["claude","codex"])}).strict().parse(await authorizedBody());
         json(res,201,{version:VERSION,adapter:input.adapter,...store.createGrant(input.name,input.adapter)}); return;
       }
       if(req.method==="GET" && url.pathname==="/v1/events") {
@@ -109,26 +116,26 @@ export async function startBridge(options: BridgeOptions) {
         json(res,200,{ok:true}); return;
       }
       if(req.method==="POST" && resource==="messages") {
-        const input=z.object({generation:id,messageId:id,text:z.string().min(1).max(MAX_TEXT).refine(s=>s.trim().length>0,"Message is empty")}).strict().parse(await body(req));
+        const input=z.object({generation:id,messageId:id,text:z.string().min(1).max(MAX_TEXT).refine(s=>s.trim().length>0,"Message is empty")}).strict().parse(await authorizedBody());
         const message=store.enqueue(binding,input.generation,input.messageId,input.text); pump(binding); json(res,202,message); return;
       }
       if(req.method==="POST" && resource==="interactions" && requestId) {
-        const input=z.object({generation:id,decision:z.enum(["allow","deny"]).optional(),answers:z.record(z.string(),z.array(z.string().max(10_000))).optional()}).strict().parse(await body(req));
+        const input=z.object({generation:id,decision:z.enum(["allow","deny"]).optional(),answers:z.record(z.string(),z.array(z.string().max(10_000))).optional()}).strict().parse(await authorizedBody());
         const answer=answerSchema.parse({...(input.decision?{decision:input.decision}:{}),...(input.answers?{answers:input.answers}:{})});
         const commandId=store.answer(binding,input.generation,requestId,answer);pump(binding);json(res,202,{commandId});return;
       }
       if(req.method==="POST" && resource==="reconcile") {
-        const input=z.object({generation:id,messageId:id}).strict().parse(await body(req));
+        const input=z.object({generation:id,messageId:id}).strict().parse(await authorizedBody());
         store.reconcile(binding,input.generation,input.messageId);pump(binding);json(res,200,{ok:true});return;
       }
       if(req.method==="POST" && resource==="interrupt") {
-        const input=z.object({generation:id}).strict().parse(await body(req));
+        const input=z.object({generation:id}).strict().parse(await authorizedBody());
         const commandId=store.interrupt(binding,input.generation);pump(binding);json(res,202,{commandId});return;
       }
       json(res,404,{error:"Not found"});
     } catch(error) {
       const message=error instanceof z.ZodError || error instanceof SyntaxError?"Invalid request":error instanceof Error?error.message:"Request failed";
-      if(!res.headersSent) json(res,error instanceof SyntaxError?400:409,{error:message}); else res.destroy();
+      if(!res.headersSent) json(res,error===authenticationError?401:error instanceof SyntaxError?400:409,{error:message}); else res.destroy();
     }
   });
   server.requestTimeout=15_000;
