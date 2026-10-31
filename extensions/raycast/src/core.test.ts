@@ -444,3 +444,51 @@ test("Codex pairing request is explicitly scoped to the Codex adapter",async()=>
  try{assert.equal((await hub.createPairing("server-codex","codex")).code,code);}
  finally{hub.close();server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));}
 });
+
+test("approval defaults to Allow without a second dialog and submits only once while busy", async () => {
+  const harness = viewHarness();
+  const decisions: string[] = [];
+  let finish!: (ok: boolean) => void;
+  let popped = 0;
+  const request = { requestId: "synthetic-approval", kind: "approval", title: "Synthetic approval", detail: "No command is executed", state: "pending", expiresAt: Date.now() + 60_000 };
+  const { Approval } = viewLogic(["Approval"], {
+    ...harness.globals,
+    useNavigation: () => ({ pop: () => { popped++; } }),
+    confirmAlert: () => { assert.fail("explicit Allow must not open a second confirmation dialog"); },
+  });
+  const respond = async (_request: unknown, answer: { decision: string }) => {
+    decisions.push(answer.decision);
+    return new Promise<boolean>(resolve => { finish = resolve; });
+  };
+  let tree = Approval({ request, respond });
+  const actions = views(tree).filter(item => item.type === harness.globals.Action);
+  assert.equal(actions[0]!.props.title, "Allow Request");
+  assert.equal(actions[1]!.props.title, "Deny Request");
+  assert.deepEqual(Array.from(actions[1]!.props.shortcut.modifiers), ["cmd", "shift"]);
+  assert.equal(actions[1]!.props.shortcut.key, "d");
+  const submitted = actions[0]!.props.onAction();
+  assert.deepEqual(decisions, ["allow"]);
+  await actions[0]!.props.onAction();
+  await actions[1]!.props.onAction();
+  assert.deepEqual(decisions, ["allow"], "rapid repeated activation cannot switch an in-flight decision to deny");
+  finish(false); await submitted;
+  assert.equal(popped, 0, "failed submissions keep the review open");
+  harness.reset(); tree = Approval({ request, respond });
+  const retry = views(tree).find(item => item.props.title === "Allow Request")!.props.onAction();
+  finish(true); await retry;
+  assert.deepEqual(decisions, ["allow", "allow"]);
+  assert.equal(popped, 1);
+});
+
+test("approval rechecks expiry on activation and keeps denial an explicit separate action", async () => {
+  for (const expired of [false, true]) {
+    const harness = viewHarness();
+    const decisions: string[] = [];
+    const request = { requestId: "synthetic-approval", kind: "approval", title: "Synthetic", detail: "No command is executed", state: "pending", expiresAt: Date.now() + 60_000 };
+    const { Approval } = viewLogic(["Approval"], { ...harness.globals, useNavigation: () => ({ pop() {} }) });
+    const tree = Approval({ request, respond: async (_request: unknown, answer: { decision: string }) => { decisions.push(answer.decision); return true; } });
+    if (expired) request.expiresAt = Date.now() - 1;
+    await views(tree).find(item => item.props.title === "Deny Request")!.props.onAction();
+    assert.deepEqual(decisions, expired ? [] : ["deny"]);
+  }
+});

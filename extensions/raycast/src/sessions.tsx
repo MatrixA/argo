@@ -136,23 +136,20 @@ type Respond = (request: Interaction, answer: { decision: "allow" | "deny" } | {
 function Approval({ request, respond }: { request: Interaction; respond: Respond }) {
   const { pop } = useNavigation();
   const [busy, setBusy] = useState(false);
+  const submitting = useRef(false);
   const pending = request.state === "pending" && request.expiresAt > Date.now();
   async function decide(decision: "allow" | "deny") {
-    if (busy || !pending) return;
-    if (decision === "allow" && !await confirmAlert({
-      title: "Allow this agent request?",
-      message: `${request.title}\n\n${request.detail.slice(0, 2400)}${request.detail.length > 2400 ? "\n… Review the full preview first." : ""}`,
-      primaryAction: { title: "Allow Request", style: Alert.ActionStyle.Destructive },
-      dismissAction: { title: "Cancel" },
-    })) return;
+    if (submitting.current || request.state !== "pending" || request.expiresAt <= Date.now()) return;
+    submitting.current = true;
     setBusy(true);
-    try { if (await respond(request, { decision })) pop(); } finally { setBusy(false); }
+    try { if (await respond(request, { decision })) pop(); }
+    finally { submitting.current = false; setBusy(false); }
   }
   return <Detail navigationTitle="Review Approval" isLoading={busy}
     markdown={`# ${safeMarkdown(request.title)}\n\n**${pending ? "Pending approval — review all parameters before allowing." : "This request is no longer pending."}**\n\n${safeMarkdown(request.detail)}\n\nExpires: ${new Date(request.expiresAt).toLocaleString()}`}
     actions={<ActionPanel>{pending ? <>
-      <Action title="Deny Request" icon={Icon.XMarkCircle} onAction={() => decide("deny")} />
-      <Action title="Allow Request…" icon={Icon.Checkmark} style={Action.Style.Destructive} onAction={() => decide("allow")} />
+      <Action title="Allow Request" icon={Icon.Checkmark} onAction={() => decide("allow")} />
+      <Action title="Deny Request" icon={Icon.XMarkCircle} style={Action.Style.Destructive} shortcut={{ modifiers: ["cmd", "shift"], key: "d" }} onAction={() => decide("deny")} />
     </> : null}</ActionPanel>} />;
 }
 
