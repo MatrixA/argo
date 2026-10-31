@@ -142,6 +142,8 @@ The pairing code grants one binding, expires after ten minutes, is stored only a
 
 **This remains a pull-mode handoff.** Waiting for Raycast occupies the original Agent's current turn. It does not independently continue its previous task while waiting. Previously started background processes keep running. Tool approvals remain in the original terminal. GitHub distribution does not change this limitation.
 
+If your network requires an HTTP proxy, the installer must use that proxy too. On Node versions supporting `NODE_USE_ENV_PROXY` (including the verified Node 22.23 installation), set `NODE_USE_ENV_PROXY=1` when running the installer. Keep the bridge on the proxy bypass list with `NO_PROXY=127.0.0.1,localhost,::1`. Preserve any other bypass entries your environment needs. Older Node versions may not support this option; use a supported Node release or a direct network path. Argo does not change global proxy settings.
+
 The same pairing exchange is available from the CLI:
 
 ```sh
@@ -256,7 +258,9 @@ ARGO_CODEX_LIVE=1 npx tsx --test test/codex.test.ts
 
 On the development installation, this acceptance test **fails at empty-thread resume** for the native rollout limitation described above. It is intentionally not reported as a successful rejoin.
 
-`npm run smoke` drives the public compiled CLI through service startup, pairing, connector registration, multiline send, reply, history, and detach. Its Agent is a test adapter, not a real model. The Raycast extension was opened in the actual app. Its offline/setup view and automatic latest-reply selection on opening a populated synthetic conversation were visually checked. Selection regression tests cover matching a newly sent message, reply updates, and preserving manual history navigation. The Raycast window became unavailable during the complete GUI send/automatic-selection acceptance run, including a locked-desktop interval, so that interaction remains unit-tested rather than fully GUI-verified. Permission views, real Claude model round-trips, and remote SSH end-to-end behavior have not been live-verified.
+`npm run smoke` drives the public compiled CLI through service startup, pairing, connector registration, multiline send, reply, history, and detach. Its Agent is a test adapter, not a real model. The Raycast extension was opened in the actual app. The remote setup form and successful pairing-prompt generation were exercised, and the synthetic unused code was cancelled. Its offline/setup view and automatic latest-reply selection on opening a populated synthetic conversation were visually checked. Selection regression tests cover matching a newly sent message, reply updates, and preserving manual history navigation. The Raycast window became unavailable during the complete GUI send/automatic-selection acceptance run, including a locked-desktop interval, so that interaction remains unit-tested rather than fully GUI-verified. Permission views, real Claude model round-trips, and remote SSH end-to-end behavior have not been live-verified.
+
+The published `v0.1.1` release was anonymously downloaded and installed in a clean temporary home, with its checksum verified. The installed connector then claimed a single-use code, attached an exact synthetic session, completed a synthetic receive/ack/reply round-trip, and revoked the binding. This used a real local bridge and the public GitHub release, with the configured network proxy explicitly enabled for Node. It did not call a model or connect to an external SSH server.
 
 The public-installer tests validate checksums, bounded GitHub redirects, strict archive entries, rollback, and real production installation in isolated homes. Pairing tests cover expiry, cancellation, concurrent single-use claims, hashed storage, browser rejection, and CLI secret handling.
 
