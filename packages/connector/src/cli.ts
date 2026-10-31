@@ -13,6 +13,9 @@ import { createClaudeChannel } from "./claude.js";
 const help=`Argo: connect Raycast to an existing Agent session.
 
   argo serve [--port 48123]                 Run the loopback bridge
+  argo doctor [--url LOOPBACK_URL]         Safe JSON diagnostics; --url sends no admin token
+  argo export-client --out NEW_FILE --url LOOPBACK_URL
+                                          Export private admin access readdressed for the Mac
   argo invite --name NAME [--agent claude|codex]
                                           Create a single-use pairing code, valid for ten minutes
   argo claim --url LOOPBACK_URL --stdin --out FILE
@@ -41,7 +44,8 @@ const help=`Argo: connect Raycast to an existing Agent session.
   argo launchd [--out FILE]                Print or write a launchd template; never installs it
 
 Credentials are files, not command-line tokens. ARGO_HOME defaults to ~/.argo.
-Remote connectors use the same loopback URL through an SSH reverse tunnel.
+Bridge and connectors use machine-local loopback URLs; use existing SSH -L or -R tunnels.
+export-client files contain admin authority: transfer privately, never paste into chat.
 `;
 function stopOnSignal(close:()=>Promise<void>) {
   let closing=false;const stop=()=>{if(closing)return;closing=true;void close().finally(()=>process.exit(0));};
@@ -56,6 +60,16 @@ async function main() {
   const command=parsed.positionals[0];const opts=parsed.values;
   const required=(name:keyof typeof opts)=>{const value=opts[name];if(typeof value!=="string"||!value)throw new Error(`Missing --${name}`);return value;};
   if(!command||opts.help){console.log(help);return;}
+  if(command==="doctor") {
+    const {diagnose}=await import("./diagnostics.js");
+    console.log(JSON.stringify(await diagnose(opts.url),null,2));return;
+  }
+  if(command==="export-client") {
+    const out=resolve(required("out")),url=required("url");
+    console.error("Warning: this file contains admin authority over all bridge bindings. Transfer privately to the Mac; never paste it into model/context, chat, logs, or stdout.");
+    const {exportClient}=await import("./diagnostics.js");
+    exportClient(out,url);console.log("Private client file created without changing the bridge configuration. Import its file path in Raycast; remove the transfer copy when no longer needed.");return;
+  }
   if(command==="invite") {
     const adapter=opts.agent??"claude";if(adapter!=="claude"&&adapter!=="codex")throw new Error("Agent must be claude or codex");
     console.log(JSON.stringify(await api(readClient(),"/v1/pairings","POST",{name:required("name"),adapter}),null,2));return;

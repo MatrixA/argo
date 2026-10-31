@@ -1,20 +1,20 @@
 # Connect this running Claude session to Argo
 
-These instructions are for the **already-running Claude Code Agent on the remote machine**, at the user's explicit request. Do the setup in this session's Bash tool, then attach and enter the receive/reply loop here. Do not merely return these commands for the user to run when you can execute them. Never spawn another Agent/model, restart/resume Claude, inspect transcripts, inject terminal input, or edit Claude settings, MCP configuration, permissions, or shell profiles.
+These instructions are for the **already-running Claude Code Agent on the Agent machine**, at the user's explicit request. Do the setup in this session's Bash tool, then attach and enter the receive/reply loop here. Do not merely return these commands for the user to run when you can execute them. Never spawn another Agent/model, restart/resume Claude, inspect transcripts, inject terminal input, or edit Claude settings, MCP configuration, permissions, or shell profiles.
 
-Public GitHub is **code distribution only**, not a conversation relay. Conversations travel between the connector and the user's Mac bridge through their loopback SSH tunnel. No Mac uploads source files. No GitHub login/token, bridge admin credential, or model API key is needed remotely.
+Public GitHub is **code distribution only**, not a conversation relay. Conversations travel between the connector and the user's selected bridge, directly on the same machine or through an existing loopback tunnel. No Mac uploads source files. No GitHub login/token, bridge admin credential, or model API key is needed remotely.
 
 ## Inputs and prerequisites
 
 The user's connection request supplies:
 
-- The **remote forwarded loopback URL**, typically `http://127.0.0.1:49123`.
+- The **bridge URL as seen from this Agent machine**, typically `http://127.0.0.1:49123`.
 - A display name, such as `backend`.
-- A short-lived, single-use **pairing code** generated on their Mac in Raycast (or `argo invite`). This authorizes exactly one scoped binding; it is not the durable credential.
+- A short-lived, single-use **pairing code** generated for the selected bridge in Raycast (or `argo invite`). This authorizes exactly one scoped binding; it is not the durable credential.
 
-The Mac bridge/Raycast and SSH reverse tunnel must already be running. An example tunnel on the Mac is `ssh -N -o ExitOnForwardFailure=yes -R 127.0.0.1:49123:127.0.0.1:48123 user@server`; the bridge must remain loopback-only. If this is not ready, ask the user to establish it. Do not expose the bridge publicly or invent a relay.
+The selected bridge must already be running and reachable at the supplied address. The bridge and Agent may share a machine, with no tunnel at all. Otherwise reuse the existing transport. SSH local forwarding and remote forwarding both work; the correct direction depends on bridge placement and which machine initiates SSH. Raycast may use a different loopback address for the same bridge. Do not create or change tunnels, relocate the bridge, expose it publicly, or invent a relay. See [topologies](topologies.md) for setup guidance.
 
-Remote prerequisites: **Node.js 22.13+, npm, and tar**, with HTTPS access to public GitHub release assets and registry.npmjs.org. If missing, report which prerequisite is missing; do not install system packages or change permissions automatically. The existing Claude session must have a Bash tool and authoritative `CLAUDE_CODE_SESSION_ID`, or the loaded skill's `${CLAUDE_SESSION_ID}` substitution. Do not guess a session from cwd, recent sessions, or history.
+Agent-machine prerequisites: **Node.js 22.13+, npm, and tar**, with HTTPS access to public GitHub release assets and registry.npmjs.org. If missing, report which prerequisite is missing; do not install system packages or change permissions automatically. The existing Claude session must have a Bash tool and authoritative `CLAUDE_CODE_SESSION_ID`, or the loaded skill's `${CLAUDE_SESSION_ID}` substitution. Do not guess a session from cwd, recent sessions, or history.
 
 ## 1. Download the standalone pinned installer
 
@@ -25,12 +25,12 @@ umask 077
 ARGO_SETUP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/argo-setup.XXXXXX")
 node --input-type=module - "$ARGO_SETUP_DIR/install.mjs" <<'ARGO_FETCH_END'
 import { writeFileSync } from 'node:fs';
-const source = 'https://github.com/MatrixA/argo/releases/download/v0.1.1/install.mjs';
+const source = 'https://github.com/MatrixA/argo/releases/download/v0.1.2/install.mjs';
 let url = new URL(source), bytes;
 const signal = AbortSignal.timeout(30000);
 for (let n = 0; n <= 5; n++) {
   if (url.protocol !== 'https:' || url.port || url.username || url.password || url.hash || !(
-    url.origin === 'https://github.com' && url.pathname.startsWith('/MatrixA/argo/releases/download/v0.1.1/') ||
+    url.origin === 'https://github.com' && url.pathname.startsWith('/MatrixA/argo/releases/download/v0.1.2/') ||
     ['release-assets.githubusercontent.com', 'objects.githubusercontent.com', 'github-releases.githubusercontent.com'].includes(url.hostname)
   )) throw new Error('Unexpected installer download URL');
   const response = await fetch(url, { redirect: 'manual', credentials: 'omit', signal });
@@ -57,13 +57,13 @@ Remember the absolute directory printed/created by your Bash environment: shell 
 
 ## 2. Install without starting another session
 
-Run the downloaded absolute installer path, substituting the supplied forwarded URL and display name as properly quoted shell arguments:
+Run the downloaded absolute installer path, substituting the supplied Agent-reachable URL and display name as properly quoted shell arguments:
 
 ```sh
 node /absolute/fresh/argo-setup.XXXXXX/install.mjs --url http://127.0.0.1:49123 --name backend
 ```
 
-The installer downloads pinned `v0.1.1/argo-connector.tar.gz` and `SHA256SUMS`, verifies SHA-256, rejects unsafe/unexpected archive entries, extracts into a new private staging directory, and runs `npm ci --omit=dev --ignore-scripts --workspaces=false`. It installs only public runtime code/dependencies and a uniquely named skill. It never runs claim, attach, polling, a model, or a daemon on your behalf.
+The installer downloads pinned `v0.1.2/argo-connector.tar.gz` and `SHA256SUMS`, verifies SHA-256, rejects unsafe/unexpected archive entries, extracts into a new private staging directory, and runs `npm ci --omit=dev --ignore-scripts --workspaces=false`. It installs only public runtime code/dependencies and a uniquely named skill. It never runs claim, attach, polling, a model, or a daemon on your behalf.
 
 The `ARGO_INSTALL_READY` result includes absolute `launcher`, `skillFile`, and future `credential` paths, a unique `skill` name, and the `claim` command. Save these **paths**, not credential contents. Releases live under `~/.local/share/argo/releases/<uuid>`; skills under `~/.claude/skills/argo-remote-<uuid>/SKILL.md`. Existing installations/skills are not overwritten, and nothing is added to PATH. The installer can be removed after installation.
 

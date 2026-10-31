@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { gunzipSync } from 'node:zlib';
 
-export const RELEASE = 'https://github.com/MatrixA/argo/releases/download/v0.1.1/';
+export const RELEASE = 'https://github.com/MatrixA/argo/releases/download/v0.1.2/';
 const ARCHIVE = 'argo-connector.tar.gz';
 const MAX_ARCHIVE = 16 * 1024 * 1024, MAX_TAR = 32 * 1024 * 1024;
 const quote = value => "'" + value.replaceAll("'", "'\\''") + "'";
@@ -93,9 +93,10 @@ export function connectionUrl(value) {
   return url.origin;
 }
 
-export async function install({ url, name = 'backend' }, { home = homedir(), fetchImpl = fetch } = {}) {
+export async function install({ url, name = 'backend', agent = 'claude' }, { home = homedir(), fetchImpl = fetch } = {}) {
   const [major, minor] = process.versions.node.split('.').map(Number);
   if (major < 22 || (major === 22 && minor < 13)) throw new Error('Node.js 22.13 or later is required; no system packages were changed');
+  if (agent !== 'claude' && agent !== 'codex') throw new Error('Agent must be claude or codex');
   url = connectionUrl(url);
   if (!name.trim() || name.length > 100 || /[\x00-\x1f\x7f]/.test(name)) throw new Error('Name must contain 1–100 printable characters');
   execFileSync('tar', ['--version'], { stdio: 'ignore' });
@@ -117,10 +118,14 @@ export async function install({ url, name = 'backend' }, { home = homedir(), fet
     const tarFile = join(stage, 'connector.tar'); writeFileSync(tarFile, tar, { flag: 'wx', mode: 0o600 });
     execFileSync('tar', ['-xf', tarFile, '-C', unpack], { env: { ...process.env, COPYFILE_DISABLE: '1' }, stdio: 'ignore' });
     const manifest = JSON.parse(readFileSync(join(unpack, 'package.json'), 'utf8'));
-    if (manifest.version !== '0.1.1' || manifest.workspaces || manifest.scripts || manifest.devDependencies) throw new Error('Expected a sanitized v0.1.1 connector package');
-    execFileSync('npm', ['ci', '--omit=dev', '--ignore-scripts', '--workspaces=false', '--no-audit', '--no-fund', '--userconfig=/dev/null', '--globalconfig=/dev/null'], { cwd: unpack, stdio: ['ignore', 'inherit', 'inherit'], timeout: 180_000 });
+    if (manifest.version !== '0.1.2' || manifest.workspaces || manifest.scripts || manifest.devDependencies) throw new Error('Expected a sanitized v0.1.2 connector package');
+    // npm rejects loading one path as both user and global config; keep both empty and private.
+    for (const file of ['user.npmrc', 'global.npmrc']) writeFileSync(join(stage, file), '', { flag: 'wx', mode: 0o600 });
+    execFileSync('npm', ['ci', '--omit=dev', '--ignore-scripts', '--workspaces=false', '--no-audit', '--no-fund', '--userconfig=' + join(stage, 'user.npmrc'), '--globalconfig=' + join(stage, 'global.npmrc')], { cwd: unpack, stdio: ['ignore', 'inherit', 'inherit'], timeout: 180_000 });
     renameSync(unpack, release); moved = true; chmodSync(release, 0o700);
     const command = quote(process.execPath) + ' ' + quote(join(release, 'bin/argo.mjs'));
+    const claim = `${command} claim --url ${quote(url)} --stdin --out ${quote(credential)}`;
+    if (agent === 'codex') return { version: '0.1.2', adapter: agent, release, launcher: join(release, 'bin/argo.mjs'), credential, claim };
     const template = readFileSync(join(release, 'skills/argo-bind/SKILL.md'), 'utf8');
     if (!template.includes('name: argo-bind') || !template.includes('argo attach --name backend')) throw new Error('Unexpected polling skill template');
     let rendered = template.replace('name: argo-bind', 'name: ' + skill);
@@ -128,12 +133,11 @@ export async function install({ url, name = 'backend' }, { home = homedir(), fet
     rendered = rendered.replace(/ attach --name backend/g, ' attach --credential ' + quote(credential) + ' --name ' + quote(name));
     rendered = rendered.replace('Use the installed `argo` command, or the absolute `node /path/to/argo/bin/argo.mjs` launcher supplied with this skill. Run:', 'Use only the absolute launcher and scoped credential below. Never run local attach without --credential, serve, pair, or init on this remote machine. Run:');
     rendered = rendered.replace('Local attach uses private bridge configuration automatically to authorize one binding. For a remote machine, use `--credential /private/path/to/paired.json` with the pre-paired connector credential. Never copy the bridge\'s admin credential to the remote machine. A forwarded port is still loopback.', 'This remote skill uses only the claimed scoped credential. Never read it into context or copy the bridge admin credential. A forwarded port is still loopback.');
-    const claim = `${command} claim --url ${quote(url)} --stdin --out ${quote(credential)}`;
     rendered = rendered.replace('## Attach', `## Claim first (once)\n\nBefore attaching, claim the short-lived one-time pairing code explicitly supplied by the user from their Mac. Pass this one-use code through stdin, never command arguments or diagnostic output. It is not the durable connector credential; never read credential files or request the bridge admin token. If the user has not supplied a code, ask them to supply it privately or claim in their own terminal.\n\nClaim command (stdin must be privately supplied; never run with empty stdin):\n\n\`\`\`sh\n${claim}\n\`\`\`\n\nIf ${quote(credential)} does not exist, execute claim directly in this session using a single-quoted heredoc containing the user-provided one-time code, or redirect a user-supplied private code file without reading it. If no code is supplied, let the user complete claim privately. If claim fails or expires, request a fresh code. Do not attach or start polling until claim succeeds. Never overwrite an existing credential or fall back to local admin setup.\n\n## Attach`);
     mkdirSync(dirname(skillDir), { recursive: true, mode: 0o700 });
     mkdirSync(skillDir, { mode: 0o700 }); skillCreated = true;
     writeFileSync(join(skillDir, 'SKILL.md'), rendered, { flag: 'wx', mode: 0o600 });
-    return { version: '0.1.1', release, launcher: join(release, 'bin/argo.mjs'), skill, skillFile: join(skillDir, 'SKILL.md'), credential, claim };
+    return { version: '0.1.2', adapter: agent, release, launcher: join(release, 'bin/argo.mjs'), skill, skillFile: join(skillDir, 'SKILL.md'), credential, claim };
   } catch (error) {
     if (skillCreated) rmSync(skillDir, { recursive: true, force: true });
     if (moved) rmSync(release, { recursive: true, force: true });
@@ -143,13 +147,15 @@ export async function install({ url, name = 'backend' }, { home = homedir(), fet
 
 if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
   try {
-    const { values } = parseArgs({ options: { url: { type: 'string' }, name: { type: 'string' }, help: { type: 'boolean' } } });
-    if (values.help) console.log('Usage: node install.mjs --url http://127.0.0.1:49123 [--name backend]\nDownloads pinned public v0.1.1 code; does not claim, attach, poll, or start an Agent.');
+    const { values } = parseArgs({ options: { url: { type: 'string' }, name: { type: 'string' }, agent: { type: 'string' }, help: { type: 'boolean' } } });
+    if (values.help) console.log('Usage: node install.mjs --url http://127.0.0.1:49123 [--name backend] [--agent claude|codex]\nAgent defaults to claude; codex installs runtime only, no Claude skill.\nDownloads pinned public v0.1.2 code; does not claim, attach, poll, or start an Agent.');
     else {
       if (!values.url) throw new Error('Missing --url (forwarded loopback bridge address)');
-      const result = await install({ url: values.url, name: values.name });
+      const result = await install({ url: values.url, name: values.name, agent: values.agent });
       console.log('ARGO_INSTALL_READY ' + JSON.stringify(result));
-      console.log(`Installed only. Privately supply the one-time pairing code on stdin to:\n${result.claim}\nThen use /${result.skill} in THIS existing Claude session. No Agent was started; pull works only while it keeps waiting.`);
+      console.log(`Installed only. Privately supply the one-time ${result.adapter} pairing code on stdin to:\n${result.claim}`);
+      if (result.adapter === 'codex') console.log('No Claude skill, Codex/model, or daemon was started. After claim, use this launcher with connect --credential FILE --thread EXACT_CURRENT_CODEX_THREAD_ID to join an already-loaded thread; keep the connector process alive. Installation alone is not a connection.');
+      else console.log(`Then use /${result.skill} in THIS existing Claude session. No Agent was started; pull works only while it keeps waiting.`);
     }
   } catch (error) { console.error(error.message); process.exitCode = 1; }
 }

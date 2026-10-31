@@ -1,14 +1,20 @@
 import { getPreferenceValues, LocalStorage, showToast, Toast } from "@raycast/api";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Session, Snapshot } from "../../../packages/shared/src/protocol.js";
-import { Hub, HubError, readConfig } from "./core.js";
+import { Hub, HubError } from "./core.js";
 import type { Connection } from "./core.js";
 
-export const RECENT_KEY = "recent-binding";
-export const draftKey = (bindingId: string) => `draft:${bindingId}`;
+import { loadConnection, onConnectionChange } from "./connections.js";
+export { recentKey } from "./connections.js";
+
+export const draftKey = (bindingId: string, identity?:string) => `draft:${identity??"unconfigured"}:${bindingId}`;
 export const errorText = (error: unknown) => error instanceof HubError ? error.message : "Cannot reach the local hub. Check Argo, the configuration path, and private file permissions (chmod 600).";
 
 export function useHub(bindingId?: string) {
+  const [connectionKey,setConnectionKey]=useState<string>();
+  const [profileName,setProfileName]=useState("Bridge");
+  const [address,setAddress]=useState<string>();
+  const [profileId,setProfileId]=useState("default");
   const [sessions, setSessions] = useState<Session[]>([]);
   const [snapshot, setSnapshot] = useState<Snapshot>();
   const [connection, setConnection] = useState<Connection>("connecting");
@@ -19,6 +25,14 @@ export function useHub(bindingId?: string) {
   const [attempt, setAttempt] = useState(0);
   const { configPath } = getPreferenceValues<{ configPath?: string }>();
 
+  const reconnect = useCallback(() => {
+    hub.current?.close();
+    hub.current = undefined;
+    setConnection("connecting");setSnapshot(undefined);setConnectionKey(undefined);
+    setAttempt((value) => value + 1);
+  }, []);
+  useEffect(() => onConnectionChange(reconnect), [reconnect]);
+
   useEffect(() => {
     const controller = new AbortController();
     let debounce: ReturnType<typeof setTimeout> | undefined;
@@ -27,6 +41,7 @@ export function useHub(bindingId?: string) {
     let again = false;
     let lastCursor = 0;
     setLoading(true);
+    setSnapshot(undefined);setSessions([]);setConnectionKey(undefined);setAddress(undefined);
     setConnection("connecting");
     setError(undefined);
     async function load(): Promise<number> {
@@ -60,8 +75,9 @@ export function useHub(bindingId?: string) {
     refreshRef.current = refresh;
     async function start() {
       try {
-        const config = await readConfig(configPath);
+        const {config,profile,connectionKey:key} = await loadConnection(LocalStorage,configPath);
         if (controller.signal.aborted) return;
+        setConnectionKey(key);setProfileName(profile.name);setProfileId(profile.id);setAddress(config.url);
         client = new Hub(config);
         hub.current = client;
         // The subscription starts at the snapshot's cursor, closing the fetch/subscribe race.
@@ -87,19 +103,19 @@ export function useHub(bindingId?: string) {
   }, [bindingId, configPath, attempt]);
 
   const refresh = useCallback(async () => { await refreshRef.current(); }, []);
-  const reconnect = useCallback(() => setAttempt((value) => value + 1), []);
-  return { sessions, snapshot, connection, loading, error, hub, refresh, reconnect };
+  return { sessions, snapshot, connection, loading, error, hub, refresh, reconnect, connectionKey, profileName, profileId, address };
 }
 
-export function useDraft(bindingId: string) {
+export function useDraft(bindingId: string, identity?:string) {
   const [text, setText] = useState("");
   const [ready, setReady] = useState(false);
   const writes = useRef<Promise<unknown>>(Promise.resolve());
   const current = useRef("");
   useEffect(() => {
     let active = true;
-    setReady(false);
-    void LocalStorage.getItem<string>(draftKey(bindingId)).then((value) => {
+    setReady(false);setText("");current.current="";
+    if(!identity)return;
+    void LocalStorage.getItem<string>(draftKey(bindingId,identity)).then((value) => {
       if (active) { current.current = value || ""; setText(current.current); setReady(true); }
     }).catch(() => {
       if (active) {
@@ -108,13 +124,14 @@ export function useDraft(bindingId: string) {
       }
     });
     return () => { active = false; };
-  }, [bindingId]);
+  }, [bindingId,identity]);
   const change = (value: string) => {
+    if (!identity || !ready) return;
     current.current = value;
     setText(value);
     writes.current = writes.current.then(() => value
-      ? LocalStorage.setItem(draftKey(bindingId), value)
-      : LocalStorage.removeItem(draftKey(bindingId)))
+      ? LocalStorage.setItem(draftKey(bindingId,identity), value)
+      : LocalStorage.removeItem(draftKey(bindingId,identity)))
       .catch(() => showToast({ style: Toast.Style.Failure, title: "Could not save the local draft" }));
   };
   const clearIf = (sent: string) => { if (current.current === sent) change(""); };

@@ -45,14 +45,23 @@ export function safeMarkdown(text: string): string {
   return text.replace(/[&!\[\]<>:\\]/g, (char) => entities[char]!);
 }
 
-export function remotePrompt(name:string,url:string,code:string):string {
+export function remotePrompt(name:string,url:string,code:string,adapter:"claude"|"codex"="claude"):string {
   localUrl(url);
   if(!/^ARGO-[a-f0-9]{32}$/.test(code))throw new Error("Invalid pairing code");
-  return `Read https://github.com/MatrixA/argo/blob/v0.1.1/docs/connect.md and follow it to install Argo and bind THIS existing Claude session, not a subagent or a new model.
-Remote loopback bridge: ${url}
+  if(adapter==="codex") return `Read https://github.com/MatrixA/argo/blob/v0.1.2/docs/connect-codex.md and follow it to connect THIS existing Codex session to Argo, not a subagent or a new model.
+Bridge address reachable FROM THIS AGENT MACHINE: ${url}
+Display name: ${JSON.stringify(name)}
+One-time pairing code: ${code}
+First verify this session supplies authoritative CODEX_THREAD_ID and the existing shared App Server supports app-server proxy. If unavailable, stop and report the exact missing prerequisite. Do not guess from history, restart Codex, start a new daemon/thread, use codex exec/resume, or change sandbox/approval policy to fake attachment.
+Install pinned v0.1.2 with --agent codex. Claim the single-use code via stdin. Never read or print the resulting durable credential. Use the existing transport and this exact bridge address. Do not change SSH tunnels or global settings.
+Run the installed connector with its private credential file and this exact loaded thread. Keep only this connector alive using the session's supported background execution. Report ready only after authenticated registration. Native populated-session rejoin is experimental; on failure report it without falling back to another session.`;
+  return `Read https://github.com/MatrixA/argo/blob/v0.1.2/docs/connect.md and follow it to install Argo and bind THIS existing Claude session, not a subagent or a new model.
+Bridge address reachable FROM THIS AGENT MACHINE: ${url}
 Display name: ${JSON.stringify(name)}
 One-time pairing code: ${code}
 Keep the code out of command-line arguments and logs. Use the claim command through stdin. Do not read or print the resulting credential.
+The supplied address is already reachable through the user's existing transport, or directly on the same machine. This overrides the old document's Mac/reverse-tunnel prerequisite: neither a remote machine nor SSH -R is required. Use this exact bridge address for install and claim.
+Do not create or change SSH tunnels, bridge placement, global settings, or permission policies.
 I understand this is a pull-mode handoff: waiting occupies this session's current turn, existing background processes continue, and tool approvals stay in the original terminal. After attaching, start the receive/reply loop here.`;
 }
 
@@ -141,12 +150,16 @@ export class Hub {
   private json<T>(path: string): Promise<T> {
     return this.fetch(path, {}, (response) => response.json() as Promise<T>);
   }
-  sessions() { return this.json<{ sessions: Session[]; cursor: number }>("/v1/sessions"); }
+  async sessions() {
+    const result=await this.json<{ sessions: Session[]; cursor: number }>("/v1/sessions");
+    if(!Array.isArray(result.sessions)||!Number.isSafeInteger(result.cursor)||result.cursor<0)throw new Error("This endpoint did not return an Argo bridge response.");
+    return result;
+  }
   snapshot(bindingId: string, before?: number) {
     return this.json<Snapshot>(`/v1/sessions/${encodeURIComponent(bindingId)}${before === undefined ? "" : `?before=${before}`}`);
   }
-  createPairing(name: string): Promise<Pairing> {
-    return this.fetch("/v1/pairings", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name,adapter:"claude"})}, async response => {
+  createPairing(name: string, adapter:"claude"|"codex"="claude"): Promise<Pairing> {
+    return this.fetch("/v1/pairings", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name,adapter})}, async response => {
       const result=await response.json() as Pairing;
       if(!/^ARGO-[a-f0-9]{32}$/.test(result.code)||!Number.isSafeInteger(result.expiresAt))throw new Error("Invalid pairing response");
       return result;

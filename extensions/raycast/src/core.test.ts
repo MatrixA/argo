@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
-import type { Message } from "../../../packages/shared/src/protocol.js";
+import type { Message, Session } from "../../../packages/shared/src/protocol.js";
 import { once } from "node:events";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -79,16 +79,63 @@ test("hub uses bearer auth, rejects redirects, and releases in-flight fetch on c
   } finally { hub.close(); server.closeAllConnections(); await new Promise<void>((resolve) => server.close(() => resolve())); }
 });
 
-// Raycast supplies its runtime inside the app, not Node. Evaluate only the pure
-// selection function from the actual view, without loading Raycast or hooks.
-function selectionLogic(): typeof import("./sessions.js").conversationSelection {
+// Raycast supplies its runtime inside the app, not Node. Evaluate the actual view's
+// declarations with small UI/hook stubs; no Agent credentials or user content are read.
+function viewLogic(names: string[], globals: Record<string, unknown> = {}) {
   const source = ts.createSourceFile("sessions.tsx", readFileSync(new URL("./sessions.tsx", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-  const declaration = source.statements.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === "conversationSelection");
-  assert.ok(declaration, "Conversation must explicitly control its selected reply instead of defaulting to the status row");
-  const exports = {} as { conversationSelection: typeof import("./sessions.js").conversationSelection };
-  runInNewContext(ts.transpileModule(declaration.getText(source), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2023 } }).outputText, { exports });
-  return exports.conversationSelection;
+  const declarations = source.statements.filter((node) => ts.isFunctionDeclaration(node) && names.includes(node.name?.text || "")
+    || ts.isVariableStatement(node) && node.declarationList.declarations.some((item) => ts.isIdentifier(item.name) && names.includes(item.name.text)));
+  assert.equal(declarations.length, names.length, `Missing view declaration: ${names.join(", ")}`);
+  return runInNewContext(ts.transpileModule(declarations.map((node) => node.getText(source)).join("\n"), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React, jsxFactory: "element", jsxFragmentFactory: "Fragment", target: ts.ScriptTarget.ES2023 },
+  }).outputText + `\n({${names.join(",")}})`, { exports: {}, ...globals });
 }
+function selectionLogic(): typeof import("./sessions.js").conversationSelection {
+  return viewLogic(["conversationSelection"]).conversationSelection;
+}
+
+type View = { type: unknown; props: Record<string, any> };
+function viewHarness() {
+  const states: unknown[] = [];
+  const effects: (() => void)[] = [];
+  let cursor = 0;
+  const member = (name: string) => Object.assign({}, { name });
+  const Metadata = Object.assign(member("Metadata"), { Label: "Label" });
+  return {
+    reset: () => { cursor = 0; }, effects,
+    globals: {
+      element: (type: unknown, props: object, ...children: unknown[]) => ({ type, props: { ...props, children } }),
+      Fragment: "Fragment", Color: {}, Icon: {},
+      useState(initial: unknown) {
+        const index = cursor++;
+        if (!(index in states)) states[index] = initial;
+        return [states[index], (value: unknown) => { states[index] = typeof value === "function" ? value(states[index]) : value; }];
+      },
+      useRef(initial: unknown) {
+        const index = cursor++;
+        if (!(index in states)) states[index] = { current: initial };
+        return states[index];
+      },
+      useEffect: (effect: () => void) => effects.push(effect),
+      List: Object.assign(member("List"), { EmptyView: "EmptyView", Section: "Section", Item: Object.assign(member("Item"), { Detail: Object.assign(member("ItemDetail"), { Metadata }) }) }),
+      Detail: Object.assign(member("Detail"), { Metadata }),
+      Form: Object.assign(member("Form"), { Description: "Description", TextArea: "TextArea" }),
+      ActionPanel: "ActionPanel", Action: Object.assign(member("Action"), { Push: "Push", SubmitForm: "SubmitForm", CopyToClipboard: "CopyToClipboard", Style: {} }),
+      PreferencesAction: "PreferencesAction", Setup: "Setup", SessionList: "SessionList", Compose: "Compose", Conversation: "Conversation",
+      Toast: { Style: { Failure: "failure", Success: "success" } }, safeMarkdown, HubError,
+    },
+  };
+}
+function views(value: unknown): View[] {
+  if (Array.isArray(value)) return value.flatMap(views);
+  if (!value || typeof value !== "object" || !("props" in value)) return [];
+  const view = value as View;
+  return [view, ...views(view.props.children), ...views(view.props.actions)];
+}
+const sessionFixture = (overrides: Partial<Session> = {}): Session => ({
+  id: "session", name: "Backend", adapter: "claude", generation: "g1", nativeSessionId: null, machine: "work-mac", cwd: "/work/backend",
+  online: true, status: "ready", capabilities: { send: true, streaming: true, interrupt: false, approvals: false, questions: false }, updatedAt: 1, revoked: false, ...overrides,
+});
 
 test("conversation selects the newest assistant and follows only its actively sent reply until history is selected", () => {
   const select = selectionLogic();
@@ -132,7 +179,7 @@ test("conversation selects the newest assistant and follows only its actively se
 test("conversation initializes empty and user-only snapshots once without stealing focus on refresh", () => {
   const select = selectionLogic();
   let state = select({}, { type: "snapshot", generation: "g1", messages: [] });
-  assert.equal(state.selectedItemId, "status");
+  assert.equal(state.selectedItemId, "empty");
   state = select(state, { type: "select", id: "older" });
   assert.equal(select(state, { type: "snapshot", generation: "g1", messages: [] }).selectedItemId, "older");
   const user: Message = { id: "user", role: "user", createdAt: 1, text: "prompt", state: "queued" };
@@ -145,7 +192,7 @@ test("conversation initializes empty and user-only snapshots once without steali
 test("remote setup prompt keeps names as data and clearly discloses pull handoff",()=>{
   const code="ARGO-"+"a".repeat(32);
   const prompt=remotePrompt("backend\nnot a shell command","http://127.0.0.1:49123",code);
-  assert.ok(prompt.includes("https://github.com/MatrixA/argo/blob/v0.1.1/docs/connect.md"));
+  assert.ok(prompt.includes("https://github.com/MatrixA/argo/blob/v0.1.2/docs/connect.md"));
   assert.ok(prompt.includes(JSON.stringify("backend\nnot a shell command")));
   assert.ok(prompt.includes(code));assert.match(prompt,/waiting occupies this session/);assert.match(prompt,/stdin/);
   assert.throws(()=>remotePrompt("backend","https://public.example",code));
@@ -168,42 +215,177 @@ test("Raycast pairing uses admin authentication only for creation and cancellati
   finally{hub.close();server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));}
 });
 
-test("pairing prompt keeps submitted inputs when fields change during creation", async () => {
-  const source = ts.createSourceFile("sessions.tsx", readFileSync(new URL("./sessions.tsx", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-  const declaration = source.statements.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === "PairRemote");
-  assert.ok(declaration);
-  const states: unknown[] = [];
-  let cursor = 0;
-  type View = { type: unknown; props: Record<string, any> };
-  const component = runInNewContext(ts.transpileModule(declaration.getText(source), {
-    compilerOptions: { jsx: ts.JsxEmit.React, jsxFactory: "element", target: ts.ScriptTarget.ES2023 },
-  }).outputText + "\nPairRemote;", {
-    element: (type: unknown, props: object, ...children: unknown[]) => ({ type, props: { ...props, children } }),
-    useState(initial: unknown) {
-      const index = cursor++;
-      if (!(index in states)) states[index] = initial;
-      return [states[index], (value: unknown) => { states[index] = value; }];
-    },
-    useNavigation: () => ({ pop() {} }), remotePrompt, safeMarkdown,
-    Form: { TextField: "TextField", Description: "Description" }, Detail: "Detail", ActionPanel: "ActionPanel",
-    Action: { SubmitForm: "SubmitForm", CopyToClipboard: "CopyToClipboard" }, Icon: {},
+test("session groups, labels and activity ordering distinguish attention from offline", () => {
+  const { sessionStatus, sessionGroup, orderedSessions } = viewLogic(["sessionStatus", "sessionGroup", "orderedSessions"]);
+  const sessions = [
+    sessionFixture({ id: "offline", online: false, status: "error", updatedAt: 99 }),
+    sessionFixture({ id: "ready", updatedAt: 8 }),
+    sessionFixture({ id: "waiting", status: "waiting", updatedAt: 4 }),
+    sessionFixture({ id: "busy", status: "busy", updatedAt: 10 }),
+    sessionFixture({ id: "uncertain", uncertainMessageId: "unknown", updatedAt: 7 }),
+    sessionFixture({ id: "revoked", revoked: true, updatedAt: 100 }),
+  ];
+  assert.equal(sessionStatus(sessions[0]), "Offline");
+  assert.equal(sessionStatus(sessions[2]), "Needs Input");
+  assert.equal(sessionStatus(sessions[3]), "Working");
+  assert.equal(sessionStatus(sessions[4]), "Check Agent");
+  assert.equal(sessionStatus(sessions[5]), "Unbound");
+  assert.equal(sessionGroup(sessions[0]), "Offline");
+  assert.deepEqual(Array.from(orderedSessions(sessions), (item: Session) => item.id), ["uncertain", "waiting", "busy", "ready", "revoked", "offline"]);
+  assert.equal(sessions[0]!.id, "offline", "sorting must not mutate the live feed");
+});
+
+test("session list always exposes Connect Agent and bridge recovery outside the action menu", () => {
+  const harness = viewHarness();
+  const feed = { sessions: [sessionFixture()], connection: "live", loading: false, connectionKey: "bridge-a", profileName: "Work", reconnect() {} };
+  const { SessionList } = viewLogic(["project", "title", "sessionStatus", "sessionGroup", "orderedSessions", "statusColor", "SessionList"], {
+    ...harness.globals, useHub: () => feed, useNavigation: () => ({ push() {} }),
   });
-  const code = "ARGO-" + "a".repeat(32);
-  let complete!: (value: { code: string; expiresAt: number }) => void;
-  const hub = { createPairing(name: string) {
-    assert.equal(name, "remote-backend");
-    return new Promise((resolve) => { complete = resolve; });
-  } };
-  const render = (): View => { cursor = 0; return component({ hub }); };
-  const pending = render().props.actions.props.children[0].props.onSubmit();
-  const loading = render();
-  assert.equal(loading.props.isLoading, true);
-  loading.props.children.find((view: View | null) => view?.props.id === "url").props.onChange("");
-  loading.props.children.find((view: View | null) => view?.props.id === "name").props.onChange("edited-name");
-  complete({ code, expiresAt: Date.now() + 600_000 });
-  await pending;
-  const detail = render();
-  const copy = detail.props.actions.props.children[0];
-  assert.equal(copy.props.content, remotePrompt("remote-backend", "http://127.0.0.1:49123", code));
-  assert.equal(copy.props.concealed, true);
+  const items = views(SessionList({}));
+  assert.ok(items.some((item) => item.props.id === "connect-agent"));
+  const session = items.find((item) => item.props.id === "session")!;
+  assert.equal(session.props.title, "Backend");
+  assert.equal(session.props.subtitle, "backend · work-mac");
+  assert.equal(session.props.accessories[1].tooltip, `Latest activity: ${new Date(1).toLocaleString()}`);
+  feed.connection = "offline";
+  assert.ok(views(SessionList({})).some((item) => item.props.id === "connection-recovery"));
+});
+
+test("message labels explain queueing, receiving, processing and uncertain results without claiming completion", () => {
+  const { messageStatus, sendUnavailable } = viewLogic(["messageStatus", "knownOnline", "sendUnavailable"]);
+  const message: Message = { id: "message", role: "user", text: "synthetic test", state: "queued", createdAt: 1 };
+  for (const [state, label] of [["queued", "Queued"], ["submitted", "Agent Receiving"], ["accepted", "Processing"], ["completed", "Completed"], ["failed", "Failed"], ["unknown", "Result Unknown"]]) {
+    assert.equal(messageStatus({ ...message, state }).label, label);
+  }
+  assert.match(messageStatus({ ...message, state: "unknown" }).explanation, /never replayed automatically/);
+  assert.match(messageStatus(message).explanation, /not yet received/);
+  assert.equal(sendUnavailable(sessionFixture({ status: "busy" }), true), undefined, "busy online Agents accept queued messages");
+  assert.match(sendUnavailable(sessionFixture({ online: false }), true), /draft is kept/);
+  assert.match(sendUnavailable(sessionFixture(), false), /reconnect/);
+  assert.match(sendUnavailable(sessionFixture({ status: "unknown" }), true), /original Agent/);
+});
+
+test("offline conversation keeps Compose, copy and Jump to Latest Reply available and send failure explicit", async () => {
+  const harness = viewHarness();
+  const pushed: View[] = [], toasts: any[] = [];
+  const messages: Message[] = [{ id: "reply", role: "assistant", text: "Synthetic reply", state: "completed", createdAt: 2 }];
+  const draft = { text: "Offline draft", ready: true, change() {}, clearIf() { assert.fail("unavailable sending must not clear the draft"); } };
+  const feed = { snapshot: { session: sessionFixture({ online: false }), messages, interactions: [] }, connection: "offline", connectionKey: "bridge-a", hub: { current: undefined }, reconnect() {} };
+  const { Conversation } = viewLogic(["project", "title", "sessionStatus", "knownOnline", "messageStatus", "sendUnavailable", "conversationSelection", "Conversation"], {
+    ...harness.globals, useHub: () => feed, useDraft: (binding: string, identity: string) => { assert.equal(binding, "session"); assert.equal(identity, "bridge-a"); return draft; },
+    useNavigation: () => ({ push: (view: View) => pushed.push(view) }), showToast: async (toast: unknown) => { toasts.push(toast); },
+  });
+  let tree = Conversation({ bindingId: "session", connectionKey: "bridge-a" });
+  harness.reset(); tree = Conversation({ bindingId: "session", connectionKey: "bridge-a" });
+  const items = views(tree);
+  assert.equal(tree.props.selectedItemId, "reply", "offline warning must not replace the latest response");
+  assert.ok(!items.some((item) => item.props.id === "status"), "there is no default status row");
+  assert.ok(items.some((item) => item.props.title === "Jump to Latest Reply" && item.props.shortcut.key === "j"));
+  assert.ok(items.some((item) => item.props.title === "Copy Selected Message" && item.props.content === "Synthetic reply"));
+  const compose = items.find((item) => item.props.title === "Compose Local Draft")!;
+  compose.props.onAction();
+  assert.equal(pushed[0]!.props.text, draft.text);
+  assert.equal(await pushed[0]!.props.send("Offline draft"), false);
+  assert.equal(toasts.at(-1).title, "Message Not Sent");
+  assert.match(toasts.at(-1).message, /draft stays on this Mac/);
+  feed.connectionKey = "bridge-b";
+  feed.connection = "live";
+  harness.reset();
+  tree = Conversation({ bindingId: "session", connectionKey: "bridge-a" });
+  assert.ok(!views(tree).some((item) => item.props.id === "reply"), "a different bridge's snapshot is never mixed into the pinned conversation");
+  assert.equal(await pushed[0]!.props.send("Offline draft"), false, "an already-open compose cannot send after changing bridge");
+  assert.match(toasts.at(-1).message, /connection changed/);
+});
+
+test("Compose preserves a failed draft and only closes after an explicit successful send", async () => {
+  const harness = viewHarness();
+  const changed: string[] = [], submitted: string[] = [];
+  let popped = 0, succeeds = false;
+  const { Compose } = viewLogic(["Compose"], { ...harness.globals, useNavigation: () => ({ pop: () => { popped++; } }) });
+  const render = () => { harness.reset(); return Compose({ text: "saved draft", change: (text: string) => changed.push(text), send: async (text: string) => { submitted.push(text); return succeeds; } }); };
+  views(render()).find((item) => item.props.id === "text")!.props.onChange("edited draft");
+  assert.deepEqual(changed, ["edited draft"]);
+  await views(render()).find((item) => item.type === "SubmitForm")!.props.onSubmit();
+  assert.equal(popped, 0);
+  assert.equal(views(render()).find((item) => item.props.id === "text")!.props.value, "edited draft");
+  succeeds = true;
+  await views(render()).find((item) => item.type === "SubmitForm")!.props.onSubmit();
+  assert.deepEqual(submitted, ["edited draft", "edited draft"]);
+  assert.equal(popped, 1);
+});
+
+test("Jump to Latest Reply returns from manual history without following unrelated replies", () => {
+  const select = selectionLogic();
+  const messages: Message[] = [
+    { id: "old", role: "assistant", text: "old", state: "completed", createdAt: 1 },
+    { id: "latest", role: "assistant", text: "latest", state: "accepted", createdAt: 3 },
+    { id: "newer-user", role: "user", text: "user", state: "queued", createdAt: 4 },
+  ];
+  const state = select({ generation: "g1", selectedItemId: "old", replyTo: "send-1" }, { type: "latest", messages });
+  assert.equal(state.selectedItemId, "latest");
+  assert.equal(state.replyTo, undefined);
+  assert.equal(select(state, { type: "snapshot", generation: "g1", messages: [...messages, { ...messages[1]!, id: "unrelated", createdAt: 5 }] }).selectedItemId, "latest");
+});
+
+test("recent session falls back visibly and clears only a missing or revoked connection-scoped recent", async () => {
+  for (const scenario of ["valid", "missing", "revoked", "offline", "none"] as const) {
+    const harness = viewHarness();
+    const removed: string[] = [], reads: string[] = [];
+    let closed = false;
+    const { SessionCommand } = viewLogic(["SessionCommand"], {
+      ...harness.globals,
+      getPreferenceValues: () => ({ configPath: "/synthetic/client.json" }),
+      loadConnection: async () => ({ config: { url: "http://127.0.0.1:1", token }, connectionKey: "bridge-a" }),
+      recentKey: (identity: string) => `recent-binding:${identity}`,
+      LocalStorage: {
+        getItem: async (key: string) => { reads.push(key); return scenario === "none" ? undefined : "session"; },
+        removeItem: async (key: string) => { removed.push(key); },
+      },
+      Hub: class {
+        async sessions() {
+          if (scenario === "offline") throw new Error("synthetic offline");
+          return { sessions: scenario === "missing" ? [] : [sessionFixture({ revoked: scenario === "revoked" })] };
+        }
+        close() { closed = true; }
+      },
+    });
+    SessionCommand({ recent: true });
+    harness.effects[0]!();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    harness.reset();
+    const result = SessionCommand({ recent: true });
+    assert.deepEqual(reads, ["recent-binding:bridge-a"]);
+    if (scenario === "valid") {
+      assert.equal(result.type, "Conversation");
+      assert.equal(result.props.connectionKey, "bridge-a");
+    } else {
+      assert.equal(result.type, "SessionList");
+      assert.ok(result.props.notice, "fallback must explain why the recent session was not opened");
+    }
+    assert.deepEqual(removed, ["missing", "revoked"].includes(scenario) ? ["recent-binding:bridge-a"] : []);
+    assert.equal(closed, scenario !== "none", "temporary validation client is always closed");
+  }
+});
+
+
+test("Codex pairing prompt targets its exact existing shared runtime without Claude pull",()=>{
+ const code="ARGO-"+"c".repeat(32);
+ const prompt=remotePrompt("server-codex","http://127.0.0.1:49123",code,"codex");
+ assert.match(prompt,/v0\.1\.2\/docs\/connect-codex\.md/);
+ assert.match(prompt,/CODEX_THREAD_ID/);assert.match(prompt,/--agent codex/);
+ assert.match(prompt,/Do not guess from history/);assert.match(prompt,/experimental/);
+ assert.ok(!prompt.includes("CLAUDE_SESSION_ID"));assert.ok(!prompt.includes("receive/reply loop"));
+});
+test("Codex pairing request is explicitly scoped to the Codex adapter",async()=>{
+ const code="ARGO-"+"d".repeat(32);
+ const server=createServer(async(request,response)=>{
+  assert.equal(request.headers.authorization,`Bearer ${token}`);
+  const chunks:Buffer[]=[];for await(const chunk of request)chunks.push(Buffer.from(chunk));
+  assert.deepEqual(JSON.parse(Buffer.concat(chunks).toString()),{name:"server-codex",adapter:"codex"});
+  response.writeHead(201,{"Content-Type":"application/json"}).end(JSON.stringify({code,expiresAt:Date.now()+600000}));
+ });
+ server.listen(0,"127.0.0.1");await once(server,"listening");const address=server.address();assert.ok(address&&typeof address==="object");
+ const hub=new Hub({url:`http://127.0.0.1:${address.port}`,token});
+ try{assert.equal((await hub.createPairing("server-codex","codex")).code,code);}
+ finally{hub.close();server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));}
 });

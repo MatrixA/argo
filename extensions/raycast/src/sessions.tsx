@@ -1,88 +1,93 @@
 import {
   Action, ActionPanel, Alert, Color, confirmAlert, Detail, Form, Icon, List,
-  LocalStorage, openExtensionPreferences, showToast, Toast, useNavigation,
+  getPreferenceValues, LocalStorage, openExtensionPreferences, showToast, Toast, useNavigation,
 } from "@raycast/api";
 import type { LaunchProps } from "@raycast/api";
 import { randomUUID } from "node:crypto";
 import { Fragment, useEffect, useRef, useState } from "react";
-import type { Interaction, Message, Pairing, Session } from "../../../packages/shared/src/protocol.js";
-import { Hub, HubError, remotePrompt, safeMarkdown } from "./core.js";
-import { errorText, RECENT_KEY, useDraft, useHub } from "./hooks.js";
+import type { Interaction, Message, Session } from "../../../packages/shared/src/protocol.js";
+import { Hub, HubError, safeMarkdown } from "./core.js";
+import { errorText, recentKey, useDraft, useHub } from "./hooks.js";
+import { loadConnection } from "./connections.js";
+import { Setup } from "./onboarding.js";
 
 export type Context = { bindingId?: string; recent?: boolean };
 const project = (session: Session) => session.cwd.split(/[\\/]/).filter(Boolean).pop() || session.cwd || "No project";
-const title = (session: Session) => `${session.machine} · ${session.adapter === "claude" ? "Claude" : "Codex"} · ${project(session)} · ${session.name}`;
-const status = (session: Session) => session.revoked ? "Unbound" : !session.online ? "offline" : session.status;
-const statusColor = (session: Session) => !session.online || session.revoked ? Color.SecondaryText
-  : session.status === "ready" ? Color.Green : session.status === "error" ? Color.Red : Color.Orange;
+const title = (session: Session) => session.name || project(session);
+export function sessionStatus(session: Session): string {
+  if (session.revoked) return "Unbound";
+  if (!session.online || session.status === "offline") return "Offline";
+  if (session.uncertainMessageId) return "Check Agent";
+  return { ready: "Ready", busy: "Working", waiting: "Needs Input", connecting: "Connecting", unknown: "Check Agent", error: "Needs Attention" }[session.status];
+}
+export function sessionGroup(session: Session): "Needs Attention" | "Online" | "Offline" {
+  if (session.revoked || !session.online || session.status === "offline") return "Offline";
+  return session.uncertainMessageId || ["waiting", "unknown", "error"].includes(session.status) ? "Needs Attention" : "Online";
+}
+export function orderedSessions(sessions: readonly Session[]): Session[] {
+  const groups = ["Needs Attention", "Online", "Offline"];
+  return [...sessions].sort((a, b) => groups.indexOf(sessionGroup(a)) - groups.indexOf(sessionGroup(b))
+    || b.updatedAt - a.updatedAt || a.name.localeCompare(b.name));
+}
+const statusColor = (session: Session) => sessionGroup(session) === "Offline" ? Color.SecondaryText
+  : sessionGroup(session) === "Needs Attention" ? session.status === "error" ? Color.Red : Color.Orange
+  : session.status === "ready" ? Color.Green : Color.Orange;
 const knownOnline = (session: Session) => session.online && !session.revoked && ["ready", "busy", "waiting"].includes(session.status);
+
+export function messageStatus(message: Message): { label: string; explanation: string } {
+  switch (message.state) {
+    case "queued": return { label: "Queued", explanation: "Saved in the hub queue; not yet received by the Agent. It waits for the Agent to be ready." };
+    case "submitted": return { label: "Agent Receiving", explanation: "Forwarded to the Agent connection; receipt and completion are not yet confirmed." };
+    case "accepted": return { label: "Processing", explanation: message.role === "assistant" ? "The Agent is writing this reply; it may still change." : "The Agent acknowledged this message and is processing it. Completion is not yet confirmed." };
+    case "completed": return { label: "Completed", explanation: message.role === "assistant" ? "The Agent finished this reply." : "The Agent reported that this turn completed." };
+    case "failed": return { label: "Failed", explanation: "The Agent reported a failure. Review the details and original terminal before retrying." };
+    case "unknown": return { label: "Result Unknown", explanation: "Argo cannot confirm the result. Check the original Agent before retrying; this message is never replayed automatically." };
+  }
+}
 
 function PreferencesAction() {
   return <Action title="Open Argo Preferences" icon={Icon.Gear} onAction={openExtensionPreferences} />;
 }
 
-function PairRemote({hub}:{hub:Hub}) {
-  const [name,setName]=useState("remote-backend");
-  const [url,setUrl]=useState("http://127.0.0.1:49123");
-  const [pairing,setPairing]=useState<Pairing & {name:string;url:string}>();
-  const [busy,setBusy]=useState(false);
-  const [error,setError]=useState<string>();
-  const {pop}=useNavigation();
-  if(pairing) {
-    const prompt=remotePrompt(pairing.name,pairing.url,pairing.code);
-    return <Detail navigationTitle="Connect Remote Claude" markdown={`# Give this prompt to your remote Claude\n\nThe SSH tunnel must already forward the remote loopback port to this Mac. GitHub distributes code only.\n\nThis is a handoff, not a background listener: waiting occupies the current Agent turn. Tool approvals remain in its terminal.\n\n**Single-use code expires at ${new Date(pairing.expiresAt).toLocaleTimeString()}.** Copy only to the intended Agent. It grants control of one binding, never all sessions. Closing this view does not cancel the code.\n\n${safeMarkdown(prompt)}`}
-      actions={<ActionPanel>
-        <Action.CopyToClipboard title="Copy Agent Setup Prompt" content={prompt} concealed />
-        <Action title="Cancel Unused Pairing Code" icon={Icon.XMarkCircle} onAction={async()=>{
-          try{await hub.cancelPairing(pairing.code);pop();}catch(cause){await showToast({style:Toast.Style.Failure,title:"Could Not Cancel Code",message:errorText(cause)});}
-        }} />
-      </ActionPanel>} />;
-  }
-  return <Form navigationTitle="Connect Remote Claude" isLoading={busy} enableDrafts={false} actions={<ActionPanel>
-    <Action.SubmitForm title="Create Pairing Prompt" onSubmit={async()=>{
-      if(busy)return;
-      try {
-        if(!name.trim()||name.trim().length>100)throw new Error("Enter a name of 1–100 characters");
-        remotePrompt(name.trim(),url.trim(),"ARGO-"+"0".repeat(32));
-      }catch{setError("Enter a name of 1–100 characters and a loopback HTTP address without a path.");return;}
-      const input={name:name.trim(),url:url.trim()};
-      setBusy(true);setError(undefined);
-      try{setPairing({...await hub.createPairing(input.name),...input});}catch(cause){setError(errorText(cause));}finally{setBusy(false);}
-    }} />
-  </ActionPanel>}>
-    <Form.Description text="Your remote Agent downloads Argo from GitHub and exchanges a single-use code. No files or admin credentials need copying. Prepare your SSH reverse tunnel first." />
-    <Form.TextField id="name" title="Session Name" value={name} onChange={setName} />
-    <Form.TextField id="url" title="Remote Loopback URL" value={url} onChange={setUrl} />
-    {error?<Form.Description title="Cannot Pair" text={error}/>:null}
-  </Form>;
-}
-
-function SessionList() {
+function SessionList({ notice }: { notice?: string }) {
   const feed = useHub();
   const { push } = useNavigation();
-  async function open(session: Session) {
-    push(<Conversation bindingId={session.id} />);
-  }
-  const pairAction=feed.hub.current && feed.connection==="live" ? <Action.Push title="Connect Remote Claude" icon={Icon.Plus} shortcut={{modifiers:["cmd"],key:"n"}} target={<PairRemote hub={feed.hub.current} />} /> : null;
+  const setupAction = <Action.Push title="Connection Setup" icon={Icon.Plus} shortcut={{ modifiers: ["cmd"], key: "n" }} target={<Setup onConnected={feed.reconnect} />} />;
   const actions = <ActionPanel>
-    {pairAction}
-    <Action title="Refresh Sessions" icon={Icon.ArrowClockwise} onAction={feed.reconnect} />
+    {setupAction}
+    <Action title="Refresh Sessions" icon={Icon.ArrowClockwise} shortcut={{ modifiers: ["cmd"], key: "r" }} onAction={feed.reconnect} />
     <PreferencesAction />
   </ActionPanel>;
-  return <List isLoading={feed.loading} navigationTitle={`Argo · ${feed.connection}`} searchBarPlaceholder="Find a machine, agent, or project" actions={actions}>
-    <List.EmptyView title={feed.error ? "Hub unavailable" : "No bound sessions"}
-      description={feed.error || "Choose Connect Remote Claude to create a setup prompt, or bind a local session with Argo."} icon={Icon.Terminal} />
-    {feed.error && feed.sessions.length > 0 ? <List.Item title="Hub unavailable — cached sessions" subtitle={feed.error} icon={Icon.Warning} actions={actions} /> : null}
-    {feed.sessions.map((session) => <List.Item key={session.id} id={session.id} title={title(session)}
-      subtitle={session.cwd} keywords={[session.machine, session.adapter, session.name, session.cwd]}
-      icon={{ source: Icon.Terminal, tintColor: statusColor(session) }}
-      accessories={[{ tag: { value: status(session), color: statusColor(session) } }]}
-      actions={<ActionPanel>
-        <Action title="Open Conversation" icon={Icon.Message} onAction={() => open(session)} />
-        {pairAction}
-        <Action title="Refresh Sessions" icon={Icon.ArrowClockwise} shortcut={{ modifiers: ["cmd"], key: "r" }} onAction={feed.reconnect} />
-        <PreferencesAction />
-      </ActionPanel>} />)}
+  const unavailable = Boolean(feed.error || feed.connection === "offline");
+  const sessions = orderedSessions(feed.sessions);
+  return <List isLoading={feed.loading} navigationTitle={`Argo · ${feed.profileName}`} searchBarPlaceholder="Find a session, project, machine, or Agent" actions={actions}>
+    <List.EmptyView title="No Matching Sessions" description="Try the session name, project, or machine. Clear search to connect another Agent." icon={Icon.MagnifyingGlass} />
+    {notice ? <List.Item id="recent-notice" title={notice} icon={Icon.Info} actions={actions} /> : null}
+    {unavailable ? <List.Item id="connection-recovery" title="Reconnect Your Bridge" subtitle={feed.error || "Hub offline — sessions may be out of date"}
+      icon={{ source: Icon.Warning, tintColor: Color.Orange }} actions={actions} /> : null}
+    {!sessions.length && !feed.loading && !unavailable ? <List.Item id="no-sessions" title="No Agents Connected Yet" subtitle="Connect an existing terminal Agent to get started" icon={Icon.Terminal} actions={actions} /> : null}
+    {["Needs Attention", "Online", "Offline"].map((group) => {
+      const entries = sessions.filter((session) => sessionGroup(session) === group);
+      return entries.length ? <List.Section key={group} title={group} subtitle={`${entries.length} session${entries.length === 1 ? "" : "s"}`}>
+        {entries.map((session) => <List.Item key={session.id} id={session.id} title={title(session)}
+          subtitle={`${project(session)} · ${session.machine}`} keywords={[session.machine, session.adapter, session.name, session.cwd]}
+          icon={{ source: Icon.Terminal, tintColor: statusColor(session) }}
+          accessories={[
+            { text: session.adapter === "claude" ? "Claude" : "Codex" },
+            { date: new Date(session.updatedAt), tooltip: `Latest activity: ${new Date(session.updatedAt).toLocaleString()}` },
+            { tag: { value: sessionStatus(session), color: statusColor(session) } },
+          ]}
+          actions={<ActionPanel>
+            <Action title={session.revoked ? "Session Unbound — Open Details" : "Open Conversation"} icon={Icon.Message} onAction={() => push(<Conversation bindingId={session.id} connectionKey={feed.connectionKey} />)} />
+            {setupAction}
+            <Action title="Refresh Sessions" icon={Icon.ArrowClockwise} shortcut={{ modifiers: ["cmd"], key: "r" }} onAction={feed.reconnect} />
+            <PreferencesAction />
+          </ActionPanel>} />)}
+      </List.Section> : null;
+    })}
+    <List.Section title="Connections" subtitle={feed.address}>
+      <List.Item id="connect-agent" title="Connect Agent…" subtitle="Pair an existing Agent or manage bridge connections" icon={Icon.Plus} keywords={["setup", "pair", "connect", "bridge"]} actions={actions} />
+    </List.Section>
   </List>;
 }
 
@@ -97,7 +102,7 @@ function Compose({ text, change, send }: { text: string; change: (text: string) 
       try { if (await send(value)) pop(); } finally { setBusy(false); }
     }} />
   </ActionPanel>}>
-    <Form.Description text="Explicitly send this message to the bound terminal agent. Sending does not mean the agent has completed it." />
+    <Form.Description text="Your draft is saved on this Mac as you type. Nothing sends automatically, including after reconnecting. Send submits to the hub queue only when the Agent is online; a busy Agent receives it after the current turn." />
     <Form.TextArea id="text" title="Message" value={value} onChange={(next) => { setValue(next); change(next); }}
       error={value.length > 100_000 ? "Maximum 100,000 characters" : undefined} autoFocus />
   </Form>;
@@ -165,10 +170,16 @@ function Questions({ request, respond }: { request: Interaction; respond: Respon
 type ConversationSelection = { generation?: string; selectedItemId?: string; replyTo?: string };
 type SelectionEvent = { type: "snapshot"; generation: string; messages: readonly Message[] }
   | { type: "send"; messageId: string }
-  | { type: "select"; id: string | null };
+  | { type: "select"; id: string | null }
+  | { type: "latest"; messages: readonly Message[] };
 
 export function conversationSelection(state: ConversationSelection, event: SelectionEvent): ConversationSelection {
   if (event.type === "send") return { ...state, replyTo: event.messageId };
+  if (event.type === "latest") {
+    const latest = event.messages.filter((message) => message.role === "assistant").reduce<Message | undefined>((newest, message) =>
+      !newest || message.createdAt > newest.createdAt ? message : newest, undefined);
+    return latest ? { ...state, selectedItemId: latest.id, replyTo: undefined } : state;
+  }
   if (event.type === "select") {
     // Loading defaults and callbacks acknowledging our own selection aren't user navigation.
     if (!state.generation || event.id === null || event.id === state.selectedItemId) return state;
@@ -179,14 +190,28 @@ export function conversationSelection(state: ConversationSelection, event: Selec
     && (initial || Boolean(state.replyTo && message.replyTo === state.replyTo)));
   const latest = (messages: readonly Message[]) => messages.reduce<Message | undefined>((newest, message) =>
     !newest || message.createdAt > newest.createdAt ? message : newest, undefined);
-  const selectedItemId = latest(candidates)?.id ?? (initial ? latest(event.messages)?.id ?? "status" : state.selectedItemId);
+  const selectedItemId = latest(candidates)?.id ?? (initial ? latest(event.messages)?.id ?? "empty" : state.selectedItemId);
   if (initial) return { generation: event.generation, selectedItemId };
   return selectedItemId === state.selectedItemId ? state : { ...state, selectedItemId };
 }
 
-function Conversation({ bindingId }: { bindingId: string }) {
+export function sendUnavailable(session: Session | undefined, live: boolean): string | undefined {
+  if (!live) return "Bridge unavailable. Your draft stays on this Mac; reconnect before sending.";
+  if (!session || session.revoked) return "This session is no longer available. Choose another session or connect the Agent again.";
+  if (!knownOnline(session)) return session.online
+    ? "Check the original Agent and refresh its status before sending. Your draft is kept."
+    : "Agent offline. Your draft is kept; reconnect the original Agent before sending.";
+  if (!session.capabilities.send) return "This Agent connection cannot receive messages. Your draft is kept.";
+}
+
+function Conversation({ bindingId, connectionKey }: { bindingId: string; connectionKey?: string }) {
   const feed = useHub(bindingId);
-  const draft = useDraft(bindingId);
+  const { push } = useNavigation();
+  const [identity, setIdentity] = useState(connectionKey);
+  if (!identity && feed.connectionKey) setIdentity(feed.connectionKey);
+  const connectionChanged = Boolean(identity && feed.connectionKey && identity !== feed.connectionKey);
+  const draft = useDraft(bindingId, identity);
+  const latestSend = useRef<(text: string, generation?: string) => Promise<boolean>>(async () => false);
   const [busy, setBusy] = useState(false);
   const [detached, setDetached] = useState(false);
   const lock = useRef(false);
@@ -194,7 +219,7 @@ function Conversation({ bindingId }: { bindingId: string }) {
   const [older, setOlder] = useState<Message[]>([]);
   const [more, setMore] = useState<boolean>();
   const [selection, setSelection] = useState<ConversationSelection>({});
-  const snapshot = feed.snapshot;
+  const snapshot = connectionChanged ? undefined : feed.snapshot;
   const session = snapshot?.session;
   const generation = session?.generation;
   const currentSelection = snapshot ? conversationSelection(selection, {
@@ -202,13 +227,17 @@ function Conversation({ bindingId }: { bindingId: string }) {
   }) : selection;
   // Resolve before rendering List so its first selected item isn't the status row.
   if (currentSelection !== selection) setSelection(currentSelection);
-  useEffect(() => { setOlder([]); setMore(undefined); sendAttempt.current = undefined; }, [generation]);
+  useEffect(() => { setOlder([]); setMore(undefined); }, [generation, identity]);
   useEffect(() => {
-    void LocalStorage.setItem(RECENT_KEY, bindingId).catch(() => showToast({ style: Toast.Style.Failure, title: "Could not save the recent binding" }));
-  }, [bindingId]);
+    if (!identity || connectionChanged || !session || session.revoked) return;
+    void LocalStorage.setItem(recentKey(identity), bindingId).catch(() => showToast({ style: Toast.Style.Failure, title: "Could not save the recent session" }));
+  }, [bindingId, identity, connectionChanged, session?.generation]);
 
   async function run(operation: () => Promise<void>, success: string): Promise<boolean> {
-    if (lock.current) return false;
+    if (lock.current) {
+      await showToast({ style: Toast.Style.Failure, title: "Another Request Is Still Running", message: "Your draft is kept. Wait for the current request before trying again." });
+      return false;
+    }
     lock.current = true;
     setBusy(true);
     try {
@@ -223,8 +252,16 @@ function Conversation({ bindingId }: { bindingId: string }) {
       return false;
     } finally { lock.current = false; setBusy(false); }
   }
-  async function send(text: string): Promise<boolean> {
-    if (!session || !feed.hub.current || !knownOnline(session) || feed.connection !== "live" || !session.capabilities.send) return false;
+  async function send(text: string, expectedGeneration?: string): Promise<boolean> {
+    const unavailable = connectionChanged ? "Bridge connection changed. Open this session again from All Sessions; your original draft is kept."
+      : expectedGeneration && expectedGeneration !== generation ? "This Agent session changed while composing. Your draft is kept. Reopen Compose before sending."
+      : detached ? "This session was unbound. Connect an Agent before sending."
+      : !draft.ready ? "Your local draft is still loading. Wait before sending."
+      : sendUnavailable(session, Boolean(feed.hub.current && feed.connection === "live" && !feed.error));
+    if (unavailable || !session) {
+      await showToast({ style: Toast.Style.Failure, title: "Message Not Sent", message: unavailable });
+      return false;
+    }
     if (!text.trim() || text.length > 100_000) {
       await showToast({ style: Toast.Style.Failure, title: "Enter a message of 1–100,000 characters" });
       return false;
@@ -239,32 +276,35 @@ function Conversation({ bindingId }: { bindingId: string }) {
       return feed.hub.current!.mutate(bindingId, "/messages", {
         messageId: attempt.id, generation: attempt.generation, text,
       });
-    }, "Message submitted");
+    }, session.status === "ready" ? "Message queued for Agent" : "Queued — waiting for Agent");
     if (sent) { draft.clearIf(text); sendAttempt.current = undefined; }
     return sent;
   }
+  latestSend.current = send;
   const respond: Respond = async (request, answer) => {
-    if (!session || !feed.hub.current) return false;
+    const client = feed.hub.current;
+    if (connectionChanged || !session || !client) return false;
     // Re-read before approval/question submission; a Detail/Form may have remained open across a rebind.
     return run(async () => {
-      const current = await feed.hub.current!.snapshot(bindingId);
+      const current = await client.snapshot(bindingId);
       const fresh = current.interactions.find((item) => item.requestId === request.requestId);
       if (current.session.generation !== session.generation || !knownOnline(current.session)
         || !fresh || fresh.state !== "pending" || fresh.expiresAt <= Date.now()
         || fresh.kind !== request.kind || fresh.title !== request.title || fresh.detail !== request.detail
         || JSON.stringify(fresh.questions) !== JSON.stringify(request.questions)) throw new HubError(409);
-      await feed.hub.current!.mutate(bindingId, `/interactions/${encodeURIComponent(request.requestId)}`, {
+      await client.mutate(bindingId, `/interactions/${encodeURIComponent(request.requestId)}`, {
         generation: session.generation, ...answer,
       });
     }, "Response submitted");
   };
 
-  const canAct = Boolean(!detached && session && knownOnline(session) && feed.connection === "live" && !feed.error && !busy);
-  const canSend = canAct && session?.capabilities.send && draft.ready;
+  const canAct = Boolean(!connectionChanged && !detached && session && knownOnline(session) && feed.connection === "live" && !feed.error && !busy);
+  const canSend = Boolean(canAct && session?.capabilities.send && draft.ready);
+  const sendTitle = session && ["busy", "waiting"].includes(session.status) ? "Queue Message" : "Send Message";
   const allMessages = [...new Map([...older, ...(snapshot?.messages || [])].map((message) => [message.id, message])).values()]
     .sort((a, b) => b.createdAt - a.createdAt);
   async function loadOlder() {
-    if (!feed.hub.current || lock.current || !allMessages.length) return;
+    if (connectionChanged || !feed.hub.current || lock.current || !allMessages.length) return;
     lock.current = true;
     setBusy(true);
     try {
@@ -276,50 +316,78 @@ function Conversation({ bindingId }: { bindingId: string }) {
     finally { lock.current = false; setBusy(false); }
   }
   async function detach() {
-    if (!session || !feed.hub.current || !await confirmAlert({
+    const client = feed.hub.current;
+    if (connectionChanged || !session || !client || !await confirmAlert({
       title: "Unbind this terminal session?", message: `${title(session)}\nThis revokes the binding, not the terminal agent itself.`,
       primaryAction: { title: "Unbind Session", style: Alert.ActionStyle.Destructive }, dismissAction: { title: "Cancel" },
     })) return;
-    if (await run(() => feed.hub.current!.mutate(bindingId, "", undefined, "DELETE"), "Session unbound")) {
+    if (await run(() => client.mutate(bindingId, "", undefined, "DELETE"), "Session unbound")) {
       setDetached(true);
       draft.change("");
       try {
-        if (await LocalStorage.getItem<string>(RECENT_KEY) === bindingId) await LocalStorage.removeItem(RECENT_KEY);
+        if (identity && await LocalStorage.getItem<string>(recentKey(identity)) === bindingId) await LocalStorage.removeItem(recentKey(identity));
       } catch { await showToast({ style: Toast.Style.Failure, title: "Unbound, but could not clear the recent binding" }); }
     }
   }
   function commonActions() {
     return <>
-      {canSend ? <>
-        <Action title="Send Message" icon={Icon.ArrowUp} onAction={() => send(draft.text)} />
-        <Action.Push title="Compose Multiline Message" icon={Icon.Pencil} shortcut={{ modifiers: ["cmd"], key: "n" }} target={<Compose text={draft.text} change={draft.change} send={send} />} />
-      </> : null}
-      {session?.online && session.uncertainMessageId && feed.connection==="live" && !busy ? <Action title="Resume Queue After Checking Agent…" icon={Icon.Play} onAction={async()=>{
-        if(await confirmAlert({title:"Have you checked the original Agent?",message:"Confirm the Agent is idle and inspect the uncertain prompt's result. This releases queued prompts without replaying or completing the uncertain one.",primaryAction:{title:"I Checked, Resume Queue",style:Alert.ActionStyle.Destructive}})) {
-          await run(()=>feed.hub.current!.mutate(bindingId,"/reconcile",{generation:session.generation,messageId:session.uncertainMessageId}),"Queue resumed");
+      {draft.text.trim() ? <Action title={canSend ? sendTitle : "Send Message (Unavailable)"} icon={Icon.ArrowUp} onAction={() => latestSend.current(draft.text)} /> : null}
+      <Action title={canSend ? "Compose Message" : "Compose Local Draft"} icon={Icon.Pencil} shortcut={{ modifiers: ["cmd"], key: "n" }} onAction={() => {
+        if (!draft.ready) {
+          void showToast({ style: Toast.Style.Failure, title: "Draft Storage Not Ready", message: "Wait for your draft to restore, or use Connection Setup to configure a bridge first." });
+          return;
+        }
+        push(<Compose text={draft.text} change={draft.change} send={(text) => latestSend.current(text, generation)} />);
+      }} />
+      <Action title="Jump to Latest Reply" icon={Icon.ArrowDown} shortcut={{ modifiers: ["cmd"], key: "j" }} onAction={() => {
+        if (!allMessages.some((message) => message.role === "assistant")) {
+          void showToast({ style: Toast.Style.Failure, title: "No Agent Replies Yet", message: "A reply will appear after the Agent receives and processes a message." });
+          return;
+        }
+        setSelection((previous) => conversationSelection(previous, { type: "latest", messages: allMessages }));
+      }} />
+      {!connectionChanged && session?.online && session.uncertainMessageId && feed.connection==="live" && !busy ? <Action title="Resume Queue After Checking Agent…" icon={Icon.Play} onAction={async()=>{
+        const client = feed.hub.current;
+        if(client && await confirmAlert({title:"Have you checked the original Agent?",message:"Confirm the Agent is idle and inspect the uncertain prompt's result. This releases queued prompts without replaying or completing the uncertain one.",primaryAction:{title:"I Checked, Resume Queue",style:Alert.ActionStyle.Destructive}})) {
+          await run(()=>client.mutate(bindingId,"/reconcile",{generation:session.generation,messageId:session.uncertainMessageId}),"Queue resumed");
         }
       }} /> : null}
       <Action title="Refresh Conversation" icon={Icon.ArrowClockwise} shortcut={{ modifiers: ["cmd"], key: "r" }} onAction={feed.reconnect} />
       <Action.Push title="All Sessions" icon={Icon.List} target={<SessionList />} />
+      <Action.Push title="Connection Setup" icon={Icon.Gear} target={<Setup onConnected={feed.reconnect} />} />
+      <Action.Push title="Session Status & Help" icon={Icon.Info} target={<Detail navigationTitle="Session Status & Help"
+        markdown={`# ${safeMarkdown(session ? sessionStatus(session) : "Session unavailable")}\n\n${safeMarkdown(feed.error || session?.detail || "Sending is an explicit action. Busy Agents receive queued messages after the current turn.")}\n\nDrafts stay on this Mac and are never sent automatically. Unknown results must be checked in the original Agent before retrying. Images and links in Agent content are inert.`}
+        metadata={<Detail.Metadata>
+          <Detail.Metadata.Label title="Bridge" text={feed.profileName} />
+          <Detail.Metadata.Label title="Connection" text={feed.connection === "live" ? "Connected" : feed.connection === "connecting" ? "Connecting" : "Offline"} />
+          {session ? <><Detail.Metadata.Label title="Agent" text={session.adapter === "claude" ? "Claude" : "Codex"} />
+            <Detail.Metadata.Label title="Machine" text={session.machine} /><Detail.Metadata.Label title="Project" text={session.cwd} /></> : null}
+        </Detail.Metadata>} />} />
       {canAct && session?.capabilities.interrupt ? <Action title="Interrupt Agent…" icon={Icon.Stop} onAction={async () => {
-        if (await confirmAlert({ title: "Interrupt this agent?", message: title(session), primaryAction: { title: "Interrupt", style: Alert.ActionStyle.Destructive } })) {
-          await run(() => feed.hub.current!.mutate(bindingId, "/interrupt", { generation: session.generation }), "Interrupt submitted");
+        const client = feed.hub.current;
+        if (client && await confirmAlert({ title: "Interrupt this agent?", message: title(session), primaryAction: { title: "Interrupt", style: Alert.ActionStyle.Destructive } })) {
+          await run(() => client.mutate(bindingId, "/interrupt", { generation: session.generation }), "Interrupt submitted");
         }
       }} /> : null}
-      {session && !session.revoked && !detached && !busy ? <Action title="Unbind Session…" style={Action.Style.Destructive} icon={Icon.Trash} onAction={detach} /> : null}
+      {!connectionChanged && session && !session.revoked && !detached && !busy ? <Action title="Unbind Session…" style={Action.Style.Destructive} icon={Icon.Trash} onAction={detach} /> : null}
       <PreferencesAction />
     </>;
   }
-  const stateText = detached ? "Unbound" : session ? `${status(session)} · Hub ${feed.connection}` : `Hub ${feed.connection}`;
-  return <List navigationTitle={session ? title(session) : "Argo Conversation"} isLoading={feed.loading || busy}
-    selectedItemId={currentSelection.selectedItemId}
+  const unavailable = connectionChanged || detached || !session || Boolean(feed.error) || feed.connection === "offline" || !knownOnline(session);
+  const stateText = connectionChanged ? "Bridge Connection Changed" : detached ? "Session Unbound" : feed.error || feed.connection === "offline" ? "Bridge Unavailable" : session ? sessionStatus(session) : "Session Unavailable";
+  return <List navigationTitle={session ? `${title(session)} · ${project(session)}` : "Argo Conversation"} isLoading={feed.loading || busy}
+    selectedItemId={currentSelection.selectedItemId === "empty" && unavailable ? "connection-status" : currentSelection.selectedItemId}
     onSelectionChange={(id) => setSelection((previous) => conversationSelection(previous, { type: "select", id }))}
     filtering={false} isShowingDetail searchText={draft.text} onSearchTextChange={(text) => { if (draft.ready) draft.change(text); }}
-    searchBarPlaceholder={canSend ? "Type a short message, then choose Send Message" : "Draft only — sending unavailable until the agent is ready"}
+    searchBarPlaceholder={canSend ? "Draft a message · Enter to send · ⌘N for multiline" : "Local draft — sending requires a connected Agent"}
     actions={<ActionPanel>{commonActions()}</ActionPanel>}>
-    <List.Item id="status" title={stateText} icon={{ source: feed.error ? Icon.Warning : Icon.Info, tintColor: session ? statusColor(session) : Color.SecondaryText }}
-      detail={<List.Item.Detail markdown={`# ${safeMarkdown(stateText)}\n\n${safeMarkdown(feed.error || session?.detail || "Select a message or request to inspect it. Sending is always an explicit action.")}\n\n${session ? safeMarkdown(`${session.machine} · ${session.adapter}\n\n${session.cwd}`) : ""}\n\nImages and links in agent content are inert. Local drafts are stored only on this Mac.`} />}
-      actions={<ActionPanel>{commonActions()}</ActionPanel>} />
+    <List.EmptyView title="Loading Conversation" description="Restoring your local draft and the latest Agent reply…" icon={Icon.Message} />
+    {unavailable && !feed.loading ? <List.Item id="connection-status" title={stateText} subtitle="Your draft is kept on this Mac" icon={{ source: Icon.Warning, tintColor: Color.Orange }}
+      detail={<List.Item.Detail markdown={`## ${safeMarkdown(stateText)}\n\n${safeMarkdown(connectionChanged ? "Open All Sessions to choose a session on the current bridge. This view keeps the original bridge’s draft and cannot send to a different connection." : feed.error || sendUnavailable(session, feed.connection === "live") || session?.detail || "Reconnect or choose another session.")}`} />}
+      actions={<ActionPanel>{commonActions()}</ActionPanel>} /> : null}
+    {!feed.loading && !unavailable && !allMessages.length && !snapshot?.interactions.length ? <List.Item id="empty" title="Start a Conversation" subtitle="Compose a message to your existing Agent" icon={Icon.Message}
+      detail={<List.Item.Detail markdown="## Your Agent replies appear here\n\nPress **⌘N** to compose a message, or type a short draft in the search bar. Sending is always explicit; reconnecting never sends a draft." />}
+      actions={<ActionPanel>{commonActions()}</ActionPanel>} /> : null}
     {(snapshot?.interactions || []).map((request) => {
       const pending = request.state === "pending" && request.expiresAt > Date.now();
       const supported = request.kind === "approval" ? session?.capabilities.approvals : session?.capabilities.questions;
@@ -334,11 +402,25 @@ function Conversation({ bindingId }: { bindingId: string }) {
           {commonActions()}
         </ActionPanel>} />;
     })}
-    {allMessages.map((message) => <List.Item key={message.id} id={message.id}
-      title={`${message.role === "user" ? "You" : "Agent"} · ${message.state}`} subtitle={message.text.replace(/\s+/g, " ").slice(0, 140)}
-      icon={message.role === "user" ? Icon.Person : Icon.Terminal}
-      detail={<List.Item.Detail markdown={`${safeMarkdown(message.text)}\n\n---\n\n**${message.state}** · ${new Date(message.createdAt).toLocaleString()}${message.detail ? `\n\n${safeMarkdown(message.detail)}` : ""}`} />}
-      actions={<ActionPanel>{commonActions()}</ActionPanel>} />)}
+    <List.Section title="Conversation" subtitle="Latest first">
+      {allMessages.map((message) => {
+        const state = messageStatus(message);
+        return <List.Item key={message.id} id={message.id}
+          title={message.text.replace(/\s+/g, " ").slice(0, 100) || "Empty message"}
+          subtitle={state.label} accessories={[{ text: message.role === "user" ? "You" : "Agent" }]}
+          icon={message.role === "user" ? Icon.Person : Icon.Message}
+          detail={<List.Item.Detail markdown={safeMarkdown(message.text)} metadata={<List.Item.Detail.Metadata>
+            <List.Item.Detail.Metadata.Label title={message.role === "user" ? "You" : "Agent"} text={new Date(message.createdAt).toLocaleString()} />
+            <List.Item.Detail.Metadata.Label title="Status" text={state.label} />
+            <List.Item.Detail.Metadata.Label title="Meaning" text={state.explanation} />
+            {message.detail ? <List.Item.Detail.Metadata.Label title="Details" text={message.detail} /> : null}
+          </List.Item.Detail.Metadata>} />}
+          actions={<ActionPanel>
+            {commonActions()}
+            <Action.CopyToClipboard title="Copy Selected Message" content={message.text} shortcut={{ modifiers: ["cmd"], key: "c" }} />
+          </ActionPanel>} />;
+      })}
+    </List.Section>
     {(more ?? snapshot?.hasMore) && allMessages.length ? <List.Item id="older" title="Load Earlier Messages" icon={Icon.Clock}
       detail={<List.Item.Detail markdown="The hub returns the latest 200 messages by default. Load an earlier page explicitly." />}
       actions={<ActionPanel><Action title="Load Earlier Messages" icon={Icon.Clock} onAction={loadOlder} />{commonActions()}</ActionPanel>} /> : null}
@@ -346,18 +428,42 @@ function Conversation({ bindingId }: { bindingId: string }) {
 }
 
 export function SessionCommand({ bindingId, recent }: Context) {
-  const [target, setTarget] = useState<string | undefined>(bindingId);
+  const [target, setTarget] = useState<{ bindingId: string; connectionKey?: string } | undefined>(bindingId ? { bindingId } : undefined);
   const [loading, setLoading] = useState(Boolean(recent && !bindingId));
+  const [notice, setNotice] = useState<string>();
+  const { configPath } = getPreferenceValues<{ configPath?: string }>();
   useEffect(() => {
     if (!recent || bindingId) return;
     let active = true;
-    void LocalStorage.getItem<string>(RECENT_KEY).then((value) => { if (active) setTarget(value || undefined); })
-      .catch(() => showToast({ style: Toast.Style.Failure, title: "Could not read the recent binding" }))
-      .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
-  }, [bindingId, recent]);
+    let hub: Hub | undefined;
+    setLoading(true);
+    void (async () => {
+      try {
+        const { config, connectionKey } = await loadConnection(LocalStorage, configPath);
+        const key = recentKey(connectionKey);
+        const saved = await LocalStorage.getItem<string>(key);
+        if (!active) return;
+        if (!saved) { setNotice("No Recent Session on This Bridge — Choose One Below"); return; }
+        hub = new Hub(config);
+        const { sessions } = await hub.sessions();
+        if (!active) return;
+        if (!sessions.some((session) => session.id === saved && !session.revoked)) {
+          await LocalStorage.removeItem(key);
+          if (active) setNotice("Recent Session No Longer Available — Choose Another");
+          return;
+        }
+        setTarget({ bindingId: saved, connectionKey });
+      } catch {
+        if (active) setNotice("Could Not Open Recent Session — Reconnect or Choose Below");
+      } finally {
+        hub?.close();
+        if (active) setLoading(false);
+      }
+    })();
+    return () => { active = false; hub?.close(); };
+  }, [bindingId, recent, configPath]);
   if (loading) return <List isLoading navigationTitle="Argo · Recent Session" />;
-  return target ? <Conversation key={target} bindingId={target} /> : <SessionList />;
+  return target ? <Conversation key={`${target.connectionKey || "current"}:${target.bindingId}`} {...target} /> : <SessionList notice={notice} />;
 }
 
 export default function Sessions(props: LaunchProps<{ launchContext: Context }>) {

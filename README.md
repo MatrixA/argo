@@ -2,15 +2,15 @@
 
 Continue an existing Claude Code or Codex session from Raycast, whether that Agent runs on your Mac or a server.
 
-Argo is a local companion service, a lightweight Agent connector, and a native Raycast extension. It does not call a model API, replace your Agent, require tmux, or upload conversations to an Argo cloud.
+Argo is a loopback companion bridge (on your Mac or a server), a lightweight Agent connector, and a native Raycast extension. It does not call a model API, replace your Agent, require tmux, or upload conversations to an Argo cloud.
 
 ## Requirements
 
 - Node.js 22.13 or later, npm, and Raycast on macOS.
 - Claude Code with its Bash tool for on-demand pull attachment. Channels support is optional. Codex needs a shared App Server and `app-server proxy` support.
-- For remote Agents: Node.js and the connector on the Agent machine, plus an SSH tunnel back to the Mac.
+- For remote connections: Node.js and the connector on the Agent machine, plus a working loopback transport to the chosen bridge. Existing SSH LocalForward or RemoteForward both work; the bridge can run on the Mac or a server.
 
-The GitHub self-service installer is pinned to release `v0.1.1`.
+The GitHub self-service installer is pinned to release `v0.1.2`, including diagnostics, private admin export and separate Claude/Codex installation modes. Load the Raycast extension from this checkout. Codex remains experimental; release availability is not proof that an arbitrary running Codex session can attach.
 
 The protocols are evolving. Development used Claude Code 2.1.314 and Codex CLI 0.157.1. A successful build or mock test is not proof that your installation enables these experimental features.
 
@@ -22,7 +22,9 @@ npm run build
 node bin/argo.mjs serve
 ```
 
-The service listens only on `http://127.0.0.1:48123`. On first start it creates a private `~/.argo/client.json` containing the Raycast credential. Do not paste its contents into a conversation.
+Run these commands on the chosen bridge machine. The service listens only on `http://127.0.0.1:48123` there. On first start it creates a private `~/.argo/client.json` containing admin authority over all bridge bindings. Do not paste its contents into a conversation.
+
+**Choose your setup:** [Deployment topology guide](docs/topologies.md) covers everything on the Mac, Mac bridge with either direction of SSH forwarding, a server bridge, existing tunnels, and a shared remote bridge with both local and remote Agents. No public relay or TLS proxy is added.
 
 Use `ARGO_HOME=/private/path` to isolate an installation, or `serve --port PORT` for another port. An existing installation cannot silently change its address. The CLI uses a lock to prevent concurrent bridge processes. After an abnormal exit, check the PID in `bridge.lock` before removing a stale lock. Connector `.lock` files require the same check.
 
@@ -32,9 +34,11 @@ Use `ARGO_HOME=/private/path` to isolate an installation, or `serve --port PORT`
 npm run dev --workspace extensions/raycast
 ```
 
-Open **Argo → Agent Sessions** in Raycast. Set **Recent Agent Session** to a global shortcut for direct access to your last conversation. The extension reads `~/.argo/client.json` by default. Its preference can point to a different private configuration file.
+Open **Argo → Agent Sessions** in Raycast. Use **Connection Setup** to choose where the bridge and Agent run, keep an existing tunnel, or add/switch bridge connections. **Use an Existing Bridge** takes a private configuration file path and **Address From This Mac**; it verifies authenticated access before switching. Saved profiles contain references and per-Mac loopback URL overrides, never token contents. The default remains `~/.argo/client.json`, or the configured preference path. Set **Recent Agent Session** to a global shortcut for direct access to your last conversation.
 
-Type a short prompt into the conversation's search bar and use **Send Message**. Use **Compose Multiline Message** for longer input. Replies are Markdown details, not the private Raycast AI chat surface. Opening a conversation selects its latest Agent reply. Sending a message automatically selects its matching reply when it arrives and follows subsequent reply updates. Selecting another item stops following until you send again. Only explicitly submitted text is sent. No screen, browser page, or selected text is collected automatically.
+For a server bridge, [export/import its admin file privately](docs/topologies.md#export-and-import-admin-access-privately) on the Mac first. For Agents, create separate scoped pairing prompts and enter **Address From Agent** as seen on their own machine. Admin import is not Agent pairing. The same bridge can serve Mac and server Agents at once.
+
+Type a short prompt into the conversation's search bar and use **Send Message**. Use **Compose Message** or **⌘N** for longer input. Replies are Markdown details, not the private Raycast AI chat surface. Opening a conversation selects its latest Agent reply. Sending a message automatically selects its matching reply when it arrives and follows subsequent reply updates. Selecting another item stops following until you send again. Only explicitly submitted text is sent. No screen, browser page, or selected text is collected automatically.
 
 The extension can be unloaded or hidden while the Agent continues. The service retains bridge messages and replays events on reconnect.
 
@@ -102,7 +106,11 @@ An already-running session without the Channel enabled may need an explicit rest
 
 ## Connect Codex
 
-Authorize a binding on the Mac:
+**Experimental native path, not the default Claude pull setup.** In Connection Setup choose the matching topology, select **Codex · Experimental shared runtime**, then **Create Experimental Codex Prompt**. Copy the private prompt into the existing Codex session. It checks the authoritative current thread and existing shared App Server, installs the public runtime with `--agent codex` without creating a Claude skill, claims a scoped code via stdin, then connects that exact loaded thread. [Agent-facing Codex instructions](docs/connect-codex.md).
+
+If `CODEX_THREAD_ID`, `app-server proxy`, the existing control socket or the exact loaded thread is unavailable, stop and report that prerequisite. Do not launch another daemon, use `codex exec`/CLI resume, infer a recent thread or weaken permissions to fake attachment. Real populated-session rejoin remains unverified. The following manual pairing path is optional:
+
+Authorize a binding from the selected bridge's admin client (on the Mac or bridge host):
 
 ```sh
 node bin/argo.mjs pair --agent codex --name backend --out ~/.argo/backend-codex.json
@@ -127,13 +135,15 @@ A connector restart is deliberately a new runtime authorization boundary. Pair a
 
 ## Remote Agents
 
+The following convenience flows use a Mac bridge. They are not a requirement: [the topology guide](docs/topologies.md) also supports existing `LocalForward`/`RemoteForward`, SSH initiated from the server, and a bridge running on the server. Do not replace a working tunnel just to match an example.
+
 ### GitHub self-service setup, recommended
 
 GitHub is the public distribution point, not a chat relay. The remote Agent downloads a versioned connector and verifies its checksum. Chat and credentials stay on the two machines and the SSH tunnel.
 
 1. Keep the Mac bridge running and prepare your SSH reverse tunnel. For example, forward remote `127.0.0.1:49123` to Mac `127.0.0.1:48123`.
-2. Open **Argo → Agent Sessions** in Raycast. Choose **Connect Remote Claude** from Actions, enter the remote loopback URL and a display name, then create a pairing prompt.
-3. Choose **Copy Agent Setup Prompt** and give it to the already-running remote Claude. It follows [the public connection guide](docs/connect.md), downloads the installer, claims the single-use code through stdin, saves its scoped credential privately, and binds that exact session.
+2. Open **Argo → Agent Sessions → Connection Setup** in Raycast. Choose the matching setup (or **I already have a working connection**), enter **Address From Agent** and a display name, then create a private pairing prompt.
+3. Choose **Copy Private Agent Prompt** and give it to the already-running remote Claude. It follows [the public connection guide](docs/connect.md), downloads the installer, claims the single-use code through stdin, saves its scoped credential privately, and binds that exact session.
 4. The Agent starts its receive/reply loop. Open its conversation in Raycast.
 
 You do not copy program files or credential files, clone/build remotely, configure MCP, or restart Claude. The remote machine still needs Node.js 22.13+, npm, tar, and outbound HTTPS to GitHub and the npm registry. Installation does not create the SSH tunnel or install system packages.
@@ -171,28 +181,30 @@ This remains cooperative pull mode: the original Claude must keep its receive/re
 
 ### Manual topology and pairing
 
-Keep the bridge on the Mac. From the Mac, forward a remote loopback port back to it:
+See [the topology matrix and machine-labelled SSH examples](docs/topologies.md#topology-matrix). Keep a working tunnel, whether it is `LocalForward` or `RemoteForward`. Every machine uses its own loopback endpoint for the same bridge. Pairing a remote Agent transfers only scoped authority; importing a remote bridge into Raycast is the separate, private admin-file operation.
+
+For manual scoped pairing, run this using the bridge's admin config; `--url` is the endpoint **from the Agent machine**, not a change to the bridge listener:
 
 ```sh
-ssh -N -o ExitOnForwardFailure=yes \
-  -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
-  -R 127.0.0.1:48123:127.0.0.1:48123 user@server
-```
-
-Install/build Argo on the server. Transfer only that Agent's paired credential file over a private channel, set mode `600`, then run the same Claude or Codex setup there. Do not transfer the Mac's `client.json`, which controls all bindings.
-
-The remote connector now uses `http://127.0.0.1:48123` on the server. Commands and files remain on the server. Replies travel on the existing bidirectional connection. No public listener or reply port is needed.
-
-If the remote forwarded port differs, set it when pairing:
-
-```sh
-node bin/argo.mjs pair --agent codex --name server-backend \
+node bin/argo.mjs pair --agent claude --name server-backend \
   --url http://127.0.0.1:49123 --out ~/.argo/server-backend.json
 ```
 
-The SSH server must permit forwarding. In this manual flow, you open the tunnel yourself. Argo never changes SSH configuration. SSH protects transport, but the forwarded port still requires the per-binding application credential.
+Transfer that single-binding credential privately to the intended Agent, mode `600`, or use the recommended one-time pairing prompt instead. Do not transfer the admin `client.json` to the Agent.
 
 ## CLI and background service
+
+```sh
+node bin/argo.mjs doctor
+# Credential-free endpoint check, including on an Agent-only machine:
+node bin/argo.mjs doctor --url http://127.0.0.1:49123
+# On the bridge host: new private admin file readdressed for the Mac's tunnel.
+node bin/argo.mjs export-client --out /private/NEW-mac-client.json --url http://127.0.0.1:49124
+```
+
+`doctor` prints safe structured JSON: Node support, private config found/missing/invalid, authenticated bridge access, session counts/status only, and a next step. It reads only `GET /v1/sessions`, changes nothing, never prints credentials/conversation content or server error bodies, and never follows redirects. Explicit `--url` sends **no admin token**; HTTP 401 means reachable but not authenticated with **unverified identity**, not proof that an arbitrary service is Argo. Findings use exit code zero; inspect `bridge.status` and `nextStep`. It reads `$ARGO_HOME/client.json`, not Raycast profiles. [Diagnostic details](docs/topologies.md#safe-diagnosis-and-next-steps).
+
+`export-client` contains admin authority over all bindings. Transfer it privately to the Mac, import its **path** in Raycast, and never put its contents into model/context, stdout, chat or logs. It creates a new file exclusively with mode `600`, refuses overwrite (including symlinks), and leaves the bridge's original config unchanged. [Full server bridge flow](docs/topologies.md#4-server-bridge-mac-opens-a-local-forward).
 
 ```sh
 node bin/argo.mjs list
@@ -214,7 +226,7 @@ Inspect and install it using your normal launchd workflow. Template generation d
 ## Safety and recovery
 
 - All control endpoints require authentication. Browser-origin requests, non-loopback addresses, redirects, and arbitrary public listeners are rejected.
-- Pairing creation and cancellation require Mac admin authentication. The native-only claim endpoint accepts a high-entropy, expiring, single-use code and returns only one scoped connector credential. Claim attempts are rate-limited and never bypass Host/Origin checks.
+- Pairing creation and cancellation require bridge admin authentication. The native-only claim endpoint accepts a high-entropy, expiring, single-use code and returns only one scoped connector credential. Claim attempts are rate-limited and never bypass Host/Origin checks.
 - A connector credential controls only one binding. The Raycast client credential controls all bindings. Credentials never belong in URLs, model context, logs, or Git.
 - Each binding has an independent queue. Switching the displayed conversation does not redirect in-flight work.
 - “Received”, “submitted”, “accepted”, “completed”, and “unknown” mean different things. Notifications written to Claude are not claimed to be processed until acknowledged.
@@ -234,7 +246,7 @@ node bin/argo.mjs reconcile --binding BINDING_ID --message MESSAGE_ID --confirm-
 
 This confirmation can release queued prompts. The original Agent must report ready. It is not an automatic retry.
 
-Data is stored locally in `~/.argo/bridge.sqlite` and the Agent machine's `~/.argo/outbox/`. History currently remains until the user removes the relevant data while the service is stopped. Revocation is not deletion. Back up anything needed before removing the database. There is no automatic retention or cloud backup.
+Data is stored on the bridge machine in `~/.argo/bridge.sqlite` and the Agent machine's `~/.argo/outbox/`. History currently remains until the user removes the relevant data while the service is stopped. Revocation is not deletion. Back up anything needed before removing the database. There is no automatic retention or cloud backup.
 
 ## Verification
 
@@ -258,13 +270,13 @@ ARGO_CODEX_LIVE=1 npx tsx --test test/codex.test.ts
 
 On the development installation, this acceptance test **fails at empty-thread resume** for the native rollout limitation described above. It is intentionally not reported as a successful rejoin.
 
-`npm run smoke` drives the public compiled CLI through service startup, pairing, connector registration, multiline send, reply, history, and detach. Its Agent is a test adapter, not a real model. The Raycast extension was opened in the actual app. The remote setup form and successful pairing-prompt generation were exercised, and the synthetic unused code was cancelled. Its offline/setup view and automatic latest-reply selection on opening a populated synthetic conversation were visually checked. Selection regression tests cover matching a newly sent message, reply updates, and preserving manual history navigation. The Raycast window became unavailable during the complete GUI send/automatic-selection acceptance run, including a locked-desktop interval, so that interaction remains unit-tested rather than fully GUI-verified. Permission views, real Claude model round-trips, and remote SSH end-to-end behavior have not been live-verified.
+`npm run smoke` drives the public compiled CLI through service startup, pairing, connector registration, multiline send, reply, history, and detach. Its Agent is a test adapter, not a real model. The updated Raycast extension was driven in the actual app against an isolated bridge and synthetic Agent. Private-file import, authenticated connection switching, local pairing-prompt generation with a secret-safe preview, sending a synthetic message, automatic selection of its arriving reply, offline send refusal, and draft persistence after closing/reopening the conversation were verified. The default bridge was preserved. No user conversation was read or sent test input. Regression tests additionally cover matching replies, manual history navigation, stale Recent fallback, per-bridge drafts and cross-connection send guards. Permission views, real Claude model round-trips, and external SSH end-to-end behavior remain unverified.
 
 The published `v0.1.1` release was anonymously downloaded and installed in a clean temporary home, with its checksum verified. The installed connector then claimed a single-use code, attached an exact synthetic session, completed a synthetic receive/ack/reply round-trip, and revoked the binding. This used a real local bridge and the public GitHub release, with the configured network proxy explicitly enabled for Node. It did not call a model or connect to an external SSH server.
 
 The public-installer tests validate checksums, bounded GitHub redirects, strict archive entries, rollback, and real production installation in isolated homes. Pairing tests cover expiry, cancellation, concurrent single-use claims, hashed storage, browser rejection, and CLI secret handling.
 
-The automated remote-deployment test substitutes SSH transport but runs the real archive extraction, production dependency installation, compiled launcher, and skill rendering in a clean temporary home. An actual external SSH host has not yet been exercised.
+The automated remote-deployment test substitutes SSH transport but runs the real archive extraction, production dependency installation, compiled launcher, and skill rendering in a clean temporary home. Diagnostics tests drive the compiled CLI in isolated homes against real loopback services, checking count/status-only output, sanitized invalid configs/responses, unauthenticated endpoint checks, redirect refusal and exclusive private admin export without changing originals. A real bidirectional byte-forwarding test gives Raycast and the connector different loopback endpoints to the same bridge and verifies scoped pairing, exact-session registration, a synthetic request/reply, event subscription and revocation. This is not an SSH or model test. Topology examples were syntax-checked with `ssh -G`, which opens no connection. No actual SSH connection or external-host topology acceptance was performed.
 
 Node may print an experimental `node:sqlite` warning on Node 22. The app uses the built-in SQLite library rather than a native addon.
 
