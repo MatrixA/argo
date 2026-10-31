@@ -48,7 +48,7 @@ export function safeMarkdown(text: string): string {
 export function remotePrompt(name:string,url:string,code:string):string {
   localUrl(url);
   if(!/^ARGO-[a-f0-9]{32}$/.test(code))throw new Error("Invalid pairing code");
-  return `Read https://github.com/MatrixA/argo/blob/v0.1.0/docs/connect.md and follow it to install Argo and bind THIS existing Claude session, not a subagent or a new model.
+  return `Read https://github.com/MatrixA/argo/blob/v0.1.1/docs/connect.md and follow it to install Argo and bind THIS existing Claude session, not a subagent or a new model.
 Remote loopback bridge: ${url}
 Display name: ${JSON.stringify(name)}
 One-time pairing code: ${code}

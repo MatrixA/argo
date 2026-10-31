@@ -24,12 +24,12 @@ function PreferencesAction() {
 function PairRemote({hub}:{hub:Hub}) {
   const [name,setName]=useState("remote-backend");
   const [url,setUrl]=useState("http://127.0.0.1:49123");
-  const [pairing,setPairing]=useState<Pairing>();
+  const [pairing,setPairing]=useState<Pairing & {name:string;url:string}>();
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState<string>();
   const {pop}=useNavigation();
   if(pairing) {
-    const prompt=remotePrompt(name.trim(),url.trim(),pairing.code);
+    const prompt=remotePrompt(pairing.name,pairing.url,pairing.code);
     return <Detail navigationTitle="Connect Remote Claude" markdown={`# Give this prompt to your remote Claude\n\nThe SSH tunnel must already forward the remote loopback port to this Mac. GitHub distributes code only.\n\nThis is a handoff, not a background listener: waiting occupies the current Agent turn. Tool approvals remain in its terminal.\n\n**Single-use code expires at ${new Date(pairing.expiresAt).toLocaleTimeString()}.** Copy only to the intended Agent. It grants control of one binding, never all sessions. Closing this view does not cancel the code.\n\n${safeMarkdown(prompt)}`}
       actions={<ActionPanel>
         <Action.CopyToClipboard title="Copy Agent Setup Prompt" content={prompt} concealed />
@@ -45,8 +45,9 @@ function PairRemote({hub}:{hub:Hub}) {
         if(!name.trim()||name.trim().length>100)throw new Error("Enter a name of 1–100 characters");
         remotePrompt(name.trim(),url.trim(),"ARGO-"+"0".repeat(32));
       }catch{setError("Enter a name of 1–100 characters and a loopback HTTP address without a path.");return;}
+      const input={name:name.trim(),url:url.trim()};
       setBusy(true);setError(undefined);
-      try{setPairing(await hub.createPairing(name.trim()));}catch(cause){setError(errorText(cause));}finally{setBusy(false);}
+      try{setPairing({...await hub.createPairing(input.name),...input});}catch(cause){setError(errorText(cause));}finally{setBusy(false);}
     }} />
   </ActionPanel>}>
     <Form.Description text="Your remote Agent downloads Argo from GitHub and exchanges a single-use code. No files or admin credentials need copying. Prepare your SSH reverse tunnel first." />

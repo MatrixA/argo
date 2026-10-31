@@ -10,6 +10,8 @@ Argo is a local companion service, a lightweight Agent connector, and a native R
 - Claude Code with its Bash tool for on-demand pull attachment. Channels support is optional. Codex needs a shared App Server and `app-server proxy` support.
 - For remote Agents: Node.js and the connector on the Agent machine, plus an SSH tunnel back to the Mac.
 
+The GitHub self-service installer is pinned to release `v0.1.1`.
+
 The protocols are evolving. Development used Claude Code 2.1.314 and Codex CLI 0.157.1. A successful build or mock test is not proof that your installation enables these experimental features.
 
 ## Build and start

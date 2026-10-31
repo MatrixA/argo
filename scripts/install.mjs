@@ -2,14 +2,14 @@
 // Standalone public installer: no project imports, credentials, settings edits, or Agent startup.
 import { execFileSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { gunzipSync } from 'node:zlib';
 
-export const RELEASE = 'https://github.com/MatrixA/argo/releases/download/v0.1.0/';
+export const RELEASE = 'https://github.com/MatrixA/argo/releases/download/v0.1.1/';
 const ARCHIVE = 'argo-connector.tar.gz';
 const MAX_ARCHIVE = 16 * 1024 * 1024, MAX_TAR = 32 * 1024 * 1024;
 const quote = value => "'" + value.replaceAll("'", "'\\''") + "'";
@@ -117,7 +117,7 @@ export async function install({ url, name = 'backend' }, { home = homedir(), fet
     const tarFile = join(stage, 'connector.tar'); writeFileSync(tarFile, tar, { flag: 'wx', mode: 0o600 });
     execFileSync('tar', ['-xf', tarFile, '-C', unpack], { env: { ...process.env, COPYFILE_DISABLE: '1' }, stdio: 'ignore' });
     const manifest = JSON.parse(readFileSync(join(unpack, 'package.json'), 'utf8'));
-    if (manifest.version !== '0.1.0' || manifest.workspaces || manifest.scripts || manifest.devDependencies) throw new Error('Expected a sanitized v0.1.0 connector package');
+    if (manifest.version !== '0.1.1' || manifest.workspaces || manifest.scripts || manifest.devDependencies) throw new Error('Expected a sanitized v0.1.1 connector package');
     execFileSync('npm', ['ci', '--omit=dev', '--ignore-scripts', '--workspaces=false', '--no-audit', '--no-fund', '--userconfig=/dev/null', '--globalconfig=/dev/null'], { cwd: unpack, stdio: ['ignore', 'inherit', 'inherit'], timeout: 180_000 });
     renameSync(unpack, release); moved = true; chmodSync(release, 0o700);
     const command = quote(process.execPath) + ' ' + quote(join(release, 'bin/argo.mjs'));
@@ -133,7 +133,7 @@ export async function install({ url, name = 'backend' }, { home = homedir(), fet
     mkdirSync(dirname(skillDir), { recursive: true, mode: 0o700 });
     mkdirSync(skillDir, { mode: 0o700 }); skillCreated = true;
     writeFileSync(join(skillDir, 'SKILL.md'), rendered, { flag: 'wx', mode: 0o600 });
-    return { version: '0.1.0', release, launcher: join(release, 'bin/argo.mjs'), skill, skillFile: join(skillDir, 'SKILL.md'), credential, claim };
+    return { version: '0.1.1', release, launcher: join(release, 'bin/argo.mjs'), skill, skillFile: join(skillDir, 'SKILL.md'), credential, claim };
   } catch (error) {
     if (skillCreated) rmSync(skillDir, { recursive: true, force: true });
     if (moved) rmSync(release, { recursive: true, force: true });
@@ -141,10 +141,10 @@ export async function install({ url, name = 'backend' }, { home = homedir(), fet
   } finally { rmSync(stage, { recursive: true, force: true }); }
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
   try {
     const { values } = parseArgs({ options: { url: { type: 'string' }, name: { type: 'string' }, help: { type: 'boolean' } } });
-    if (values.help) console.log('Usage: node install.mjs --url http://127.0.0.1:49123 [--name backend]\nDownloads pinned public v0.1.0 code; does not claim, attach, poll, or start an Agent.');
+    if (values.help) console.log('Usage: node install.mjs --url http://127.0.0.1:49123 [--name backend]\nDownloads pinned public v0.1.1 code; does not claim, attach, poll, or start an Agent.');
     else {
       if (!values.url) throw new Error('Missing --url (forwarded loopback bridge address)');
       const result = await install({ url: values.url, name: values.name });

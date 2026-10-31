@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
 import test from "node:test";
@@ -80,7 +80,7 @@ test("public release installs real production dependencies and unique safe polli
     assert.deepEqual(readdirSync(join(home,".local/share/argo/releases")),before);
     const broken=gzipSync(Buffer.alloc(2048,42));assert.throws(()=>validateArchive(broken),/Invalid/);
     // Valid, checksummed tar; fail only after real extraction and verify rollback.
-    const wrongVersion=gunzipSync(archive),needle=Buffer.from('"version": "0.1.0",\n  "private"');
+    const wrongVersion=gunzipSync(archive),needle=Buffer.from('"version": "0.1.1",\n  "private"');
     const at=wrongVersion.indexOf(needle);assert.ok(at>=0);
     wrongVersion.write('"version": "9.9.9",\n  "private"',at);
     await assert.rejects(install({url:"http://127.0.0.1:49123"},{home,fetchImpl:transport(gzipSync(wrongVersion))}),/sanitized/);
@@ -92,7 +92,7 @@ test("public release installs real production dependencies and unique safe polli
 test("downloads bound bytes, redirects and origin without a public URL override",async()=>{
   assert.equal(connectionUrl("http://127.0.0.1:49123"),"http://127.0.0.1:49123");
   for(const url of ["http://server:49123","https://127.0.0.1:49123","http://user@localhost:1234","http://127.0.0.1:1234/path","http://127.0.0.1:1234/?x=1"])assert.throws(()=>connectionUrl(url));
-  for(const url of ["https://evil.example/file","http://github.com/MatrixA/argo/releases/download/v0.1.0/file","https://github.com/other/repo/file","https://github.com:444/MatrixA/argo/releases/download/v0.1.0/file","https://user@release-assets.githubusercontent.com/file"])assert.throws(()=>releaseUrl(url));
+  for(const url of ["https://evil.example/file","http://github.com/MatrixA/argo/releases/download/v0.1.1/file","https://github.com/other/repo/file","https://github.com:444/MatrixA/argo/releases/download/v0.1.1/file","https://user@release-assets.githubusercontent.com/file"])assert.throws(()=>releaseUrl(url));
   assert.equal(releaseUrl(RELEASE+"SHA256SUMS").origin,"https://github.com");
   assert.equal(releaseUrl("https://release-assets.githubusercontent.com/path?signature=value").hostname,"release-assets.githubusercontent.com");
   let calls=0;
@@ -106,4 +106,19 @@ test("downloads bound bytes, redirects and origin without a public URL override"
     if(!redirected){redirected=true;return new Response(null,{status:302,headers:{location:"https://release-assets.githubusercontent.com/a"}});}
     assert.equal(url,"https://release-assets.githubusercontent.com/a");return new Response("ok");
   });assert.equal(bytes.toString(),"ok");
+});
+
+
+test("standalone CLI entrypoints execute through symlink paths",()=>{
+  const directory=mkdtempSync("/tmp/argo-entrypoint-test-");
+  try {
+    const installer=join(directory,"install.mjs"),builder=join(directory,"package-release.mjs");
+    symlinkSync(resolve("scripts/install.mjs"),installer);
+    symlinkSync(resolve("scripts/package-release.mjs"),builder);
+    const help=execFileSync(process.execPath,[installer,"--help"],{encoding:"utf8"});
+    assert.match(help,/Usage: node install\.mjs/);assert.match(help,/v0\.1\.1/);
+    const out=join(directory,"artifacts");
+    const built=JSON.parse(execFileSync(process.execPath,[builder,"--root",resolve("."),"--out",out],{encoding:"utf8"}));
+    for(const artifact of [built.archive,built.installer,built.sums])assert.ok(existsSync(artifact));
+  }finally{rmSync(directory,{recursive:true,force:true});}
 });

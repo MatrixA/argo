@@ -2,7 +2,7 @@
 // Public code only. Never package a working tree, credential, or remote-setup manifest wholesale.
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,7 +19,7 @@ function regular(path) {
 export function buildRelease({ root = resolve(fileURLToPath(new URL('..', import.meta.url))), out }) {
   root = resolve(root); out = resolve(out);
   const packageJson = JSON.parse(regular(join(root, 'package.json')));
-  if (packageJson.version !== '0.1.0') throw new Error('Update the pinned installer before releasing another version');
+  if (packageJson.version !== '0.1.1') throw new Error('Update the pinned installer before releasing another version');
   const manifest = pick(packageJson, manifestKeys);
   const sourceLock = JSON.parse(regular(join(root, 'package-lock.json')));
   if (sourceLock.lockfileVersion !== 3) throw new Error('Expected npm lockfile version 3');
@@ -68,7 +68,7 @@ export function buildRelease({ root = resolve(fileURLToPath(new URL('..', import
   } finally { rmSync(stage, { recursive: true, force: true }); }
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
   try {
     const { values } = parseArgs({ options: { root: { type: 'string' }, out: { type: 'string' } } });
     if (!values.out) throw new Error('Usage: node scripts/package-release.mjs --out /private/fresh-release [--root /absolute/argo]');

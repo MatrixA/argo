@@ -25,12 +25,12 @@ umask 077
 ARGO_SETUP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/argo-setup.XXXXXX")
 node --input-type=module - "$ARGO_SETUP_DIR/install.mjs" <<'ARGO_FETCH_END'
 import { writeFileSync } from 'node:fs';
-const source = 'https://github.com/MatrixA/argo/releases/download/v0.1.0/install.mjs';
+const source = 'https://github.com/MatrixA/argo/releases/download/v0.1.1/install.mjs';
 let url = new URL(source), bytes;
 const signal = AbortSignal.timeout(30000);
 for (let n = 0; n <= 5; n++) {
   if (url.protocol !== 'https:' || url.port || url.username || url.password || url.hash || !(
-    url.origin === 'https://github.com' && url.pathname.startsWith('/MatrixA/argo/releases/download/v0.1.0/') ||
+    url.origin === 'https://github.com' && url.pathname.startsWith('/MatrixA/argo/releases/download/v0.1.1/') ||
     ['release-assets.githubusercontent.com', 'objects.githubusercontent.com', 'github-releases.githubusercontent.com'].includes(url.hostname)
   )) throw new Error('Unexpected installer download URL');
   const response = await fetch(url, { redirect: 'manual', credentials: 'omit', signal });
@@ -63,7 +63,7 @@ Run the downloaded absolute installer path, substituting the supplied forwarded 
 node /absolute/fresh/argo-setup.XXXXXX/install.mjs --url http://127.0.0.1:49123 --name backend
 ```
 
-The installer downloads pinned `v0.1.0/argo-connector.tar.gz` and `SHA256SUMS`, verifies SHA-256, rejects unsafe/unexpected archive entries, extracts into a new private staging directory, and runs `npm ci --omit=dev --ignore-scripts --workspaces=false`. It installs only public runtime code/dependencies and a uniquely named skill. It never runs claim, attach, polling, a model, or a daemon on your behalf.
+The installer downloads pinned `v0.1.1/argo-connector.tar.gz` and `SHA256SUMS`, verifies SHA-256, rejects unsafe/unexpected archive entries, extracts into a new private staging directory, and runs `npm ci --omit=dev --ignore-scripts --workspaces=false`. It installs only public runtime code/dependencies and a uniquely named skill. It never runs claim, attach, polling, a model, or a daemon on your behalf.
 
 The `ARGO_INSTALL_READY` result includes absolute `launcher`, `skillFile`, and future `credential` paths, a unique `skill` name, and the `claim` command. Save these **paths**, not credential contents. Releases live under `~/.local/share/argo/releases/<uuid>`; skills under `~/.claude/skills/argo-remote-<uuid>/SKILL.md`. Existing installations/skills are not overwritten, and nothing is added to PATH. The installer can be removed after installation.
 

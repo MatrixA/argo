@@ -145,7 +145,7 @@ test("conversation initializes empty and user-only snapshots once without steali
 test("remote setup prompt keeps names as data and clearly discloses pull handoff",()=>{
   const code="ARGO-"+"a".repeat(32);
   const prompt=remotePrompt("backend\nnot a shell command","http://127.0.0.1:49123",code);
-  assert.ok(prompt.includes("https://github.com/MatrixA/argo/blob/v0.1.0/docs/connect.md"));
+  assert.ok(prompt.includes("https://github.com/MatrixA/argo/blob/v0.1.1/docs/connect.md"));
   assert.ok(prompt.includes(JSON.stringify("backend\nnot a shell command")));
   assert.ok(prompt.includes(code));assert.match(prompt,/waiting occupies this session/);assert.match(prompt,/stdin/);
   assert.throws(()=>remotePrompt("backend","https://public.example",code));
@@ -166,4 +166,44 @@ test("Raycast pairing uses admin authentication only for creation and cancellati
   const hub=new Hub({url:`http://127.0.0.1:${address.port}`,token});
   try{assert.equal((await hub.createPairing("backend")).code,code);await hub.cancelPairing(code);assert.deepEqual(seen,["POST","DELETE"]);}
   finally{hub.close();server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));}
+});
+
+test("pairing prompt keeps submitted inputs when fields change during creation", async () => {
+  const source = ts.createSourceFile("sessions.tsx", readFileSync(new URL("./sessions.tsx", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const declaration = source.statements.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === "PairRemote");
+  assert.ok(declaration);
+  const states: unknown[] = [];
+  let cursor = 0;
+  type View = { type: unknown; props: Record<string, any> };
+  const component = runInNewContext(ts.transpileModule(declaration.getText(source), {
+    compilerOptions: { jsx: ts.JsxEmit.React, jsxFactory: "element", target: ts.ScriptTarget.ES2023 },
+  }).outputText + "\nPairRemote;", {
+    element: (type: unknown, props: object, ...children: unknown[]) => ({ type, props: { ...props, children } }),
+    useState(initial: unknown) {
+      const index = cursor++;
+      if (!(index in states)) states[index] = initial;
+      return [states[index], (value: unknown) => { states[index] = value; }];
+    },
+    useNavigation: () => ({ pop() {} }), remotePrompt, safeMarkdown,
+    Form: { TextField: "TextField", Description: "Description" }, Detail: "Detail", ActionPanel: "ActionPanel",
+    Action: { SubmitForm: "SubmitForm", CopyToClipboard: "CopyToClipboard" }, Icon: {},
+  });
+  const code = "ARGO-" + "a".repeat(32);
+  let complete!: (value: { code: string; expiresAt: number }) => void;
+  const hub = { createPairing(name: string) {
+    assert.equal(name, "remote-backend");
+    return new Promise((resolve) => { complete = resolve; });
+  } };
+  const render = (): View => { cursor = 0; return component({ hub }); };
+  const pending = render().props.actions.props.children[0].props.onSubmit();
+  const loading = render();
+  assert.equal(loading.props.isLoading, true);
+  loading.props.children.find((view: View | null) => view?.props.id === "url").props.onChange("");
+  loading.props.children.find((view: View | null) => view?.props.id === "name").props.onChange("edited-name");
+  complete({ code, expiresAt: Date.now() + 600_000 });
+  await pending;
+  const detail = render();
+  const copy = detail.props.actions.props.children[0];
+  assert.equal(copy.props.content, remotePrompt("remote-backend", "http://127.0.0.1:49123", code));
+  assert.equal(copy.props.concealed, true);
 });
