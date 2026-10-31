@@ -80,7 +80,7 @@ test("public release installs real production dependencies and unique safe polli
     assert.deepEqual(readdirSync(join(home,".local/share/argo/releases")),before);
     const broken=gzipSync(Buffer.alloc(2048,42));assert.throws(()=>validateArchive(broken),/Invalid/);
     // Valid, checksummed tar; fail only after real extraction and verify rollback.
-    const wrongVersion=gunzipSync(archive),needle=Buffer.from('"version": "0.1.3",\n  "private"');
+    const wrongVersion=gunzipSync(archive),needle=Buffer.from('"version": "0.1.4",\n  "private"');
     const at=wrongVersion.indexOf(needle);assert.ok(at>=0);
     wrongVersion.write('"version": "9.9.9",\n  "private"',at);
     await assert.rejects(install({url:"http://127.0.0.1:49123"},{home,fetchImpl:transport(gzipSync(wrongVersion))}),/sanitized/);
@@ -94,7 +94,7 @@ test("fresh server install needs no URL, creates no settings or skill, and start
   try {
     const built=buildRelease({root:resolve("."),out:join(directory,"release")});
     const result=await install({server:true,agent:"claude",name:"new-server"},{home,fetchImpl:transport(readFileSync(built.archive))});
-    assert.equal(result.mode,"server");assert.equal(result.version,"0.1.3");assert.equal(result.claim,undefined);assert.equal(result.skill,undefined);
+    assert.equal(result.mode,"server");assert.equal(result.version,"0.1.4");assert.equal(result.claim,undefined);assert.equal(result.skill,undefined);
     assert.match(result.bootstrap,/server-bootstrap --agent claude --name 'new-server'/);
     assert.equal(existsSync(join(home,".argo")),false);assert.equal(existsSync(join(home,".claude")),false);assert.equal(existsSync(join(home,".codex")),false);
     assert.ok(existsSync(join(result.release,"node_modules/zod/package.json")));
@@ -110,7 +110,7 @@ test("Codex mode installs real runtime only, preserves config, and returns a pat
   try {
     const built=buildRelease({root:resolve("."),out}),archive=readFileSync(built.archive);
     const result=await install({url:"http://127.0.0.1:49123",agent:"codex",name:"existing-thread"},{home,fetchImpl:transport(archive)});
-    assert.equal(result.version,"0.1.3");assert.equal(result.adapter,"codex");
+    assert.equal(result.version,"0.1.4");assert.equal(result.adapter,"codex");
     assert.equal(result.skill,undefined);assert.equal(result.skillFile,undefined);
     assert.equal(existsSync(join(home,".claude")),false,"no Claude skill or settings directory created");
     assert.equal(readFileSync(config,"utf8"),original,"Codex settings unchanged");
@@ -136,7 +136,7 @@ test("Codex mode installs real runtime only, preserves config, and returns a pat
 test("downloads bound bytes, redirects and origin without a public URL override",async()=>{
   assert.equal(connectionUrl("http://127.0.0.1:49123"),"http://127.0.0.1:49123");
   for(const url of ["http://server:49123","https://127.0.0.1:49123","http://user@localhost:1234","http://127.0.0.1:1234/path","http://127.0.0.1:1234/?x=1"])assert.throws(()=>connectionUrl(url));
-  for(const url of ["https://evil.example/file","http://github.com/MatrixA/argo/releases/download/v0.1.3/file","https://github.com/other/repo/file","https://github.com:444/MatrixA/argo/releases/download/v0.1.3/file","https://user@release-assets.githubusercontent.com/file"])assert.throws(()=>releaseUrl(url));
+  for(const url of ["https://evil.example/file","http://github.com/MatrixA/argo/releases/download/v0.1.4/file","https://github.com/other/repo/file","https://github.com:444/MatrixA/argo/releases/download/v0.1.4/file","https://user@release-assets.githubusercontent.com/file"])assert.throws(()=>releaseUrl(url));
   assert.equal(releaseUrl(RELEASE+"SHA256SUMS").origin,"https://github.com");
   assert.equal(releaseUrl("https://release-assets.githubusercontent.com/path?signature=value").hostname,"release-assets.githubusercontent.com");
   let calls=0;
@@ -160,7 +160,7 @@ test("standalone CLI entrypoints execute through symlink paths",()=>{
     symlinkSync(resolve("scripts/install.mjs"),installer);
     symlinkSync(resolve("scripts/package-release.mjs"),builder);
     const help=execFileSync(process.execPath,[installer,"--help"],{encoding:"utf8"});
-    assert.match(help,/Usage: node install\.mjs/);assert.match(help,/v0\.1\.3/);assert.match(help,/--agent claude\|codex/);
+    assert.match(help,/Usage: node install\.mjs/);assert.match(help,/v0\.1\.4/);assert.match(help,/--agent claude\|codex/);
     const out=join(directory,"artifacts");
     const built=JSON.parse(execFileSync(process.execPath,[builder,"--root",resolve("."),"--out",out],{encoding:"utf8"}));
     for(const artifact of [built.archive,built.installer,built.sums])assert.ok(existsSync(artifact));

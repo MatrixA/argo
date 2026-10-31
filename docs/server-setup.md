@@ -1,6 +1,6 @@
 # Set up this server from an uninstalled Agent session
 
-This is the **server-first cold-start entry point for Argo v0.1.3**. The user may give you only this GitHub URL. Do not assume Argo, a bridge, a skill, Mac client configuration, or a pairing code already exists. Execute the steps you can in **this existing Agent session**, rather than returning commands for the user to run. GitHub distributes public code only, never conversation traffic.
+This is the **server-first cold-start entry point for Argo v0.1.4**. The user may give you only this GitHub URL. Do not assume Argo, a bridge, a skill, Mac client configuration, or a pairing code already exists. Execute the steps you can in **this existing Agent session**, rather than returning commands for the user to run. GitHub distributes public code only, never conversation traffic.
 
 The result is a loopback Argo bridge **on this server**, a connector for this exact Agent, and a short-lived **Mac client pairing code**. The user forwards the returned server port using ordinary SSH Local Forwarding or VS Code Ports. Raycast discovers the Mac loopback endpoint and pairs once. **No Remote Forward, Mac source upload, admin-file copying or prior bridge address is required.** You must not configure tunnels automatically. Installing a Raycast extension alone does not create a network tunnel.
 
@@ -24,12 +24,12 @@ umask 077
 ARGO_SETUP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/argo-setup.XXXXXX")
 node --input-type=module - "$ARGO_SETUP_DIR/install.mjs" <<'ARGO_FETCH_END'
 import { writeFileSync } from 'node:fs';
-const source = 'https://github.com/MatrixA/argo/releases/download/v0.1.3/install.mjs';
+const source = 'https://github.com/MatrixA/argo/releases/download/v0.1.4/install.mjs';
 let url = new URL(source), bytes;
 const signal = AbortSignal.timeout(30000);
 for (let n = 0; n <= 5; n++) {
   if (url.protocol !== 'https:' || url.port || url.username || url.password || url.hash || !(
-    url.origin === 'https://github.com' && url.pathname.startsWith('/MatrixA/argo/releases/download/v0.1.3/') ||
+    url.origin === 'https://github.com' && url.pathname.startsWith('/MatrixA/argo/releases/download/v0.1.4/') ||
     ['release-assets.githubusercontent.com', 'objects.githubusercontent.com', 'github-releases.githubusercontent.com'].includes(url.hostname)
   )) throw new Error('Unexpected installer download URL');
   const response = await fetch(url, { redirect: 'manual', credentials: 'omit', signal });
@@ -76,7 +76,7 @@ Run the returned bootstrap command using this tool's supported long-running back
 
 Use `--agent claude` for Claude. Normally use the default per-user `ARGO_HOME` so multiple Agents on this server share a bridge. If the user explicitly requires an independent bridge, keep its distinct private home consistent for all later commands. Do not make independent homes per session by accident.
 
-On a new home, bootstrap selects an available server loopback port from **49120–49139**, skipping occupied ports without touching their listeners. An explicit `--port` is optional and fails rather than silently moving. Existing configured bridges are reused only after signed identity and authenticated access are verified. Existing offline configuration can be restarted without changing its credentials or database. An incompatible running older bridge is not stopped or upgraded behind the user's back; report that explicit upgrade/restart is required.
+On a new home, bootstrap selects an available server loopback port from **49120–49139**, skipping occupied ports without touching their listeners. An explicit `--port` is optional and fails rather than silently moving. Existing configured bridges are reused only after signed identity and authenticated access are verified. Existing offline configuration can be restarted without changing its credentials or database. An older running bridge is not stopped or upgraded behind the user's back; report that explicit upgrade to v0.1.4 and bridge restart are required for the client-revocation upload-race fix. Installing a new runtime or updating Raycast does not patch an already-running bridge.
 
 Wait for `ARGO_SERVER_READY` through the background handle. It contains:
 - `url`, `port`, `bridgeId`: server endpoint and stable public identity.

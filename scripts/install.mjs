@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { gunzipSync } from 'node:zlib';
 
-export const RELEASE = 'https://github.com/MatrixA/argo/releases/download/v0.1.3/';
+export const RELEASE = 'https://github.com/MatrixA/argo/releases/download/v0.1.4/';
 const ARCHIVE = 'argo-connector.tar.gz';
 const MAX_ARCHIVE = 16 * 1024 * 1024, MAX_TAR = 32 * 1024 * 1024;
 const quote = value => "'" + value.replaceAll("'", "'\\''") + "'";
@@ -119,15 +119,15 @@ export async function install({ url, name = 'backend', agent = 'claude', server 
     const tarFile = join(stage, 'connector.tar'); writeFileSync(tarFile, tar, { flag: 'wx', mode: 0o600 });
     execFileSync('tar', ['-xf', tarFile, '-C', unpack], { env: { ...process.env, COPYFILE_DISABLE: '1' }, stdio: 'ignore' });
     const manifest = JSON.parse(readFileSync(join(unpack, 'package.json'), 'utf8'));
-    if (manifest.version !== '0.1.3' || manifest.workspaces || manifest.scripts || manifest.devDependencies) throw new Error('Expected a sanitized v0.1.3 connector package');
+    if (manifest.version !== '0.1.4' || manifest.workspaces || manifest.scripts || manifest.devDependencies) throw new Error('Expected a sanitized v0.1.4 connector package');
     // npm rejects loading one path as both user and global config; keep both empty and private.
     for (const file of ['user.npmrc', 'global.npmrc']) writeFileSync(join(stage, file), '', { flag: 'wx', mode: 0o600 });
     execFileSync('npm', ['ci', '--omit=dev', '--ignore-scripts', '--workspaces=false', '--no-audit', '--no-fund', '--userconfig=' + join(stage, 'user.npmrc'), '--globalconfig=' + join(stage, 'global.npmrc')], { cwd: unpack, stdio: ['ignore', 'inherit', 'inherit'], timeout: 180_000 });
     renameSync(unpack, release); moved = true; chmodSync(release, 0o700);
     const command = quote(process.execPath) + ' ' + quote(join(release, 'bin/argo.mjs'));
-    if (server) return { version: '0.1.3', mode: 'server', adapter: agent, release, launcher: join(release, 'bin/argo.mjs'), bootstrap: `${command} server-bootstrap --agent ${agent} --name ${quote(name)}` };
+    if (server) return { version: '0.1.4', mode: 'server', adapter: agent, release, launcher: join(release, 'bin/argo.mjs'), bootstrap: `${command} server-bootstrap --agent ${agent} --name ${quote(name)}` };
     const claim = `${command} claim --url ${quote(url)} --stdin --out ${quote(credential)}`;
-    if (agent === 'codex') return { version: '0.1.3', adapter: agent, release, launcher: join(release, 'bin/argo.mjs'), credential, claim };
+    if (agent === 'codex') return { version: '0.1.4', adapter: agent, release, launcher: join(release, 'bin/argo.mjs'), credential, claim };
     const template = readFileSync(join(release, 'skills/argo-bind/SKILL.md'), 'utf8');
     if (!template.includes('name: argo-bind') || !template.includes('argo attach --name backend')) throw new Error('Unexpected polling skill template');
     let rendered = template.replace('name: argo-bind', 'name: ' + skill);
@@ -139,7 +139,7 @@ export async function install({ url, name = 'backend', agent = 'claude', server 
     mkdirSync(dirname(skillDir), { recursive: true, mode: 0o700 });
     mkdirSync(skillDir, { mode: 0o700 }); skillCreated = true;
     writeFileSync(join(skillDir, 'SKILL.md'), rendered, { flag: 'wx', mode: 0o600 });
-    return { version: '0.1.3', adapter: agent, release, launcher: join(release, 'bin/argo.mjs'), skill, skillFile: join(skillDir, 'SKILL.md'), credential, claim };
+    return { version: '0.1.4', adapter: agent, release, launcher: join(release, 'bin/argo.mjs'), skill, skillFile: join(skillDir, 'SKILL.md'), credential, claim };
   } catch (error) {
     if (skillCreated) rmSync(skillDir, { recursive: true, force: true });
     if (moved) rmSync(release, { recursive: true, force: true });
@@ -150,7 +150,7 @@ export async function install({ url, name = 'backend', agent = 'claude', server 
 if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
   try {
     const { values } = parseArgs({ options: { url: { type: 'string' }, name: { type: 'string' }, agent: { type: 'string' }, server: { type: 'boolean' }, help: { type: 'boolean' } } });
-    if (values.help) console.log('Usage: node install.mjs --url http://127.0.0.1:49123 [--name backend] [--agent claude|codex]\n       node install.mjs --server [--agent claude|codex] [--name backend]\n--server installs runtime only, without a URL or Claude skill.\nAgent defaults to claude; codex installs runtime only, no Claude skill.\nDownloads pinned public v0.1.3 code; does not claim, attach, poll, or start an Agent.');
+    if (values.help) console.log('Usage: node install.mjs --url http://127.0.0.1:49123 [--name backend] [--agent claude|codex]\n       node install.mjs --server [--agent claude|codex] [--name backend]\n--server installs runtime only, without a URL or Claude skill.\nAgent defaults to claude; codex installs runtime only, no Claude skill.\nDownloads pinned public v0.1.4 code; does not claim, attach, poll, or start an Agent.');
     else {
       if (!values.url && !values.server) throw new Error('Missing --url (forwarded loopback bridge address)');
       const result = await install({ url: values.url, name: values.name, agent: values.agent, server: values.server });

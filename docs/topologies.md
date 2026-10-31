@@ -48,7 +48,7 @@ Or use the [pinned public installer](connect.md#1-download-the-standalone-pinned
 
 `serve` creates a private admin configuration at `$ARGO_HOME/client.json` (default `~/.argo/client.json`) and a local database. Keep that original file on the bridge machine. Do not replace it to change what a tunnel looks like from another machine. For a second independent bridge, use a different `ARGO_HOME` and port.
 
-**Release scope:** the public runtime installer is pinned to `v0.1.3`, including `doctor`, `export-client` and `--agent codex`. Load the Raycast connection wizard from this checkout. Native Codex populated-session rejoin remains experimental.
+**Release scope:** the public runtime installer targets pinned `v0.1.4`, including `doctor`, `export-client` and `--agent codex`. If its tag or assets are unavailable, stop rather than falling back. Existing older bridges require explicit upgrade to v0.1.4 and restart to fix the client-revocation upload race; updating Raycast alone does not patch them. Load the Raycast connection wizard from this checkout. Native Codex populated-session rejoin remains experimental.
 
 ## 1. Everything on your Mac
 

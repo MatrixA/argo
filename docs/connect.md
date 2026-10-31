@@ -12,7 +12,7 @@ The user's connection request supplies:
 - A display name, such as `backend`.
 - A short-lived, single-use **pairing code** generated for the selected bridge in Raycast (or `argo invite`). This authorizes exactly one scoped binding; it is not the durable credential.
 
-The selected bridge must already be running and reachable at the supplied address. The bridge and Agent may share a machine, with no tunnel at all. Otherwise reuse the existing transport. SSH local forwarding and remote forwarding both work; the correct direction depends on bridge placement and which machine initiates SSH. Raycast may use a different loopback address for the same bridge. Do not create or change tunnels, relocate the bridge, expose it publicly, or invent a relay. See [topologies](topologies.md) for setup guidance.
+The selected bridge must already be running and reachable at the supplied address. Require a v0.1.4 bridge for the client-revocation upload-race fix; older servers need an explicit runtime upgrade and bridge restart, not just a connector or Raycast update. The bridge and Agent may share a machine, with no tunnel at all. Otherwise reuse the existing transport. SSH local forwarding and remote forwarding both work; the correct direction depends on bridge placement and which machine initiates SSH. Raycast may use a different loopback address for the same bridge. Do not create or change tunnels, relocate the bridge, expose it publicly, or invent a relay. See [topologies](topologies.md) for setup guidance.
 
 Agent-machine prerequisites: **Node.js 22.13+, npm, and tar**, with HTTPS access to public GitHub release assets and registry.npmjs.org. If missing, report which prerequisite is missing; do not install system packages or change permissions automatically. The existing Claude session must have a Bash tool and authoritative `CLAUDE_CODE_SESSION_ID`, or the loaded skill's `${CLAUDE_SESSION_ID}` substitution. Do not guess a session from cwd, recent sessions, or history.
 
@@ -25,12 +25,12 @@ umask 077
 ARGO_SETUP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/argo-setup.XXXXXX")
 node --input-type=module - "$ARGO_SETUP_DIR/install.mjs" <<'ARGO_FETCH_END'
 import { writeFileSync } from 'node:fs';
-const source = 'https://github.com/MatrixA/argo/releases/download/v0.1.3/install.mjs';
+const source = 'https://github.com/MatrixA/argo/releases/download/v0.1.4/install.mjs';
 let url = new URL(source), bytes;
 const signal = AbortSignal.timeout(30000);
 for (let n = 0; n <= 5; n++) {
   if (url.protocol !== 'https:' || url.port || url.username || url.password || url.hash || !(
-    url.origin === 'https://github.com' && url.pathname.startsWith('/MatrixA/argo/releases/download/v0.1.3/') ||
+    url.origin === 'https://github.com' && url.pathname.startsWith('/MatrixA/argo/releases/download/v0.1.4/') ||
     ['release-assets.githubusercontent.com', 'objects.githubusercontent.com', 'github-releases.githubusercontent.com'].includes(url.hostname)
   )) throw new Error('Unexpected installer download URL');
   const response = await fetch(url, { redirect: 'manual', credentials: 'omit', signal });
@@ -63,7 +63,7 @@ Run the downloaded absolute installer path, substituting the supplied Agent-reac
 node /absolute/fresh/argo-setup.XXXXXX/install.mjs --url http://127.0.0.1:49123 --name backend
 ```
 
-The installer downloads pinned `v0.1.3/argo-connector.tar.gz` and `SHA256SUMS`, verifies SHA-256, rejects unsafe/unexpected archive entries, extracts into a new private staging directory, and runs `npm ci --omit=dev --ignore-scripts --workspaces=false`. It installs only public runtime code/dependencies and a uniquely named skill. It never runs claim, attach, polling, a model, or a daemon on your behalf.
+The installer downloads pinned `v0.1.4/argo-connector.tar.gz` and `SHA256SUMS`, verifies SHA-256, rejects unsafe/unexpected archive entries, extracts into a new private staging directory, and runs `npm ci --omit=dev --ignore-scripts --workspaces=false`. It installs only public runtime code/dependencies and a uniquely named skill. It never runs claim, attach, polling, a model, or a daemon on your behalf.
 
 The `ARGO_INSTALL_READY` result includes absolute `launcher`, `skillFile`, and future `credential` paths, a unique `skill` name, and the `claim` command. Save these **paths**, not credential contents. Releases live under `~/.local/share/argo/releases/<uuid>`; skills under `~/.claude/skills/argo-remote-<uuid>/SKILL.md`. Existing installations/skills are not overwritten, and nothing is added to PATH. The installer can be removed after installation.
 

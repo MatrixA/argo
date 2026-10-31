@@ -19,7 +19,7 @@ function regular(path) {
 export function buildRelease({ root = resolve(fileURLToPath(new URL('..', import.meta.url))), out }) {
   root = resolve(root); out = resolve(out);
   const packageJson = JSON.parse(regular(join(root, 'package.json')));
-  if (packageJson.version !== '0.1.3') throw new Error('Update the pinned installer before releasing another version');
+  if (packageJson.version !== '0.1.4') throw new Error('Update the pinned installer before releasing another version');
   const manifest = pick(packageJson, manifestKeys);
   const sourceLock = JSON.parse(regular(join(root, 'package-lock.json')));
   if (sourceLock.lockfileVersion !== 3) throw new Error('Expected npm lockfile version 3');
