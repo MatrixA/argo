@@ -12,7 +12,7 @@ Reviewed on 2026-10-31. This is a scoped defensive review, not an independent au
 ## Scope and evidence
 
 - Reviewed bridge HTTP/connector authorization, client invitations, revocation, private credential storage, installer download/archive restrictions, extension discovery/pairing, approval submission and the Store export boundary.
-- Gitleaks 8.30.1 scanned public Git history, the pending standalone source and the anonymously downloaded v0.1.3 runtime payload. No secrets were reported. Reports were fully redacted. User homes, private credential files and conversation logs were not scanned or uploaded.
+- Gitleaks 8.30.1 scanned public Git history, the pending standalone source and the anonymously downloaded v0.1.3 runtime payload and the v0.1.4 public-package candidate. No secrets were reported. Reports were fully redacted. User homes, private credential files and conversation logs were not scanned or uploaded.
 - The exporter uses an explicit public-file allowlist and refuses an existing destination. Store source has no imports outside its own extension directory. Screenshot metadata uses disposable bridge data and synthetic approval text, not user conversations or credentials.
 - Backend tests cover Host/Origin rejection, credential separation, atomic single-use expiring pairing, client subscription closure, scoped connectors, stale session generations and explicit expiring approvals. The new upload/revocation test uses a deterministic server-authentication barrier.
 - Extension tests cover inert remote Markdown, credential-free bounded discovery, bad signatures, private configuration, exact routing and duplicate approval submission. The real app's discovery screen and actions were exercised without sending messages or decisions to a user Agent.

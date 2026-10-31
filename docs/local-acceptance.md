@@ -36,3 +36,7 @@ The screenshot preview uses the actual production conversation component against
 - Signed discovery does not make an untrusted local forwarding service safe. Use trusted local listeners or authenticated SSH forwarding.
 
 The ordinary reproducible non-model gates remain `npm test`, the extension test suite, typecheck, official standalone distribution build and `npm run smoke`. A real model acceptance additionally requires explicit authorization, a dedicated session and a bounded budget; it must never target an existing user task.
+
+## Public release installation
+
+After v0.1.4 was published, an anonymous download of its installer completed a clean-home installation with real production dependencies. The published launcher started a fresh bridge; a separate byte-forward loopback endpoint passed signed discovery, Mac pairing, exact synthetic attach/next/ack/reply and client revocation. This post-publication check is a protocol/install fixture, separate from the actual local Claude model acceptance above. Both temporary homes were removed.

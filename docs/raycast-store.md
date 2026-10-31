@@ -1,6 +1,6 @@
 # Raycast Store submission
 
-[Draft Store PR #32995](https://github.com/raycast/extensions/pull/32995) was submitted on 2026-10-31. It is not approved, listed or ready for merge. The pinned-runtime security patch and dedicated native Agent acceptance remain publication gates.
+[Store PR #32995](https://github.com/raycast/extensions/pull/32995) was submitted on 2026-10-31. The updated submission is ready for reviewer assessment, not approved or listed. The current candidate pins the patched v0.1.4 runtime and has dedicated real local Claude acceptance. Codex populated-thread and native multi-client approval acceptance remain unverified.
 
 Argo is prepared as a **self-configured companion extension**. The Store installs only the Mac UI. The separately installed bridge, connector, native Agent and loopback transport remain under the user's control. No hosted Argo service, model account, tunnel or background system service is bundled.
 
@@ -37,30 +37,30 @@ The exporter copies only extension source, assets, Store metadata, standalone ma
 
 - `extensions/raycast/README.md`: prerequisites, self-configuration, first pairing, limitations, privacy and removal.
 - `extensions/raycast/CHANGELOG.md`: initial public submission with the required merge-date placeholder.
-- `extensions/raycast/metadata/`: PNG screenshots at 2000 × 1250, showing a disposable bridge and synthetic approval. No real conversation, pairing secret or user credential is included.
+- `extensions/raycast/metadata/`: PNG screenshots at 2000 × 1250, showing a disposable bridge, synthetic approval, and a dedicated real local Claude context-recall conversation after cleanup. No existing user conversation, pairing secret or credential is included.
 - Public macOS manifest, explicit dependencies, standalone npm lockfile, ESLint/Prettier configuration, distribution build and publication scripts.
 
 ## Preparation verification
 
 Verified on 2026-10-31:
 
-- A fresh standalone export installed with `npm ci --ignore-scripts`, passed `ray lint`, passed all 33 extension tests and completed the official distribution build with TypeScript checking.
-- Repository backend regression: 54 passed and one optional native Codex test skipped, including protocol snapshot and safe-export regressions. The bridge CLI smoke test passed. No paid model request was made.
+- A fresh standalone export installed with `npm ci --ignore-scripts`, passed `ray lint`, passed all 38 extension tests and completed the official distribution build with TypeScript checking.
+- Repository backend regression: 54 passed and one optional native Codex test skipped, including protocol snapshot and safe-export regressions. The bridge CLI smoke test passed. That regression run made no paid model request. Separately, the user-authorized dedicated local Claude acceptance made real model calls and verified same-session context recall.
 - Both the repository and standalone dependency audits reported zero vulnerabilities after applying the minimatch override.
-- The screenshot metadata passed Raycast's dimensions/format validation and was visually inspected. Screenshots come from earlier real Raycast runs with disposable data, not user sessions.
-- The standalone distribution build loaded in the actual Raycast app. Its discovery screen, rescan action and action menu were exercised. This is UI-only acceptance, not an Agent model or approval round-trip. No real Agent was used as an interactive test fixture.
+- The screenshot metadata passed Raycast's dimensions/format validation and was visually inspected. Screenshots use disposable data and a dedicated local Claude acceptance session, never an existing user task. The local-context screenshot shows offline state after its bridge was cleaned up.
+- The standalone distribution build loaded in the actual Raycast app. Its discovery screen, rescan action and action menu were exercised. Earlier screenshots covered UI-only acceptance. A separate dedicated real local Claude fixture now verifies model replies and context recall; it never targets an existing user task. See [local acceptance](local-acceptance.md).
 
-## Remaining publication gates
+## Submission status and boundaries
 
 - The public `fernando_jacob` Raycast profile was verified. No account was created or changed.
 - The upstream directory and open PR titles had no Argo submission at review time. Store reviewers still decide name and branding acceptance.
-- Exercise a dedicated real supported Agent session through sending, reply and native approval completion. Synthetic UI tests, bridge discovery, authenticated registration and installation tests are not model round-trips. Codex populated-thread rejoin and multi-client approval routing remain unverified and are described as experimental.
-- Confirm the separately pinned runtime and instructions remain publicly reachable and usable. Do not overwrite existing release artifacts or move immutable tags.
-- Review the actual distribution build in Raycast. Keep the self-configuration requirement prominent in the listing.
+- Dedicated real local Claude sending, replies and context recall passed. Cooperative pull keeps tool approvals in the terminal, not Raycast. Codex populated-thread rejoin and native multi-client approval routing remain unverified and are described as experimental.
+- Published v0.1.4 assets were anonymously downloaded and installed in a clean temporary home after publication. Discovery, pairing, synthetic messaging and revocation passed. Existing release assets and immutable tags were not overwritten.
+- The distribution build was reviewed in the actual Raycast app. The listing prominently requires self-configuration.
 - Final source, screenshots and public runtime payload were reviewed and scanned before submission. Scans are not a guarantee of safety.
-- **Blocking security gate:** the source revocation fix is not in immutable v0.1.3. Publish a separately authorized patched runtime and update the pinned setup before requesting Store merge. See [security assessment](security-review.md). This submission is a draft, not a release-ready listing.
+- Runtime v0.1.4 contains the upload/revocation fix. All active installation prompts pin the new immutable release. Previously running bridges require explicit stop/restart using the new launcher. See [security assessment](security-review.md).
 
-Publishing is a separate, outward-facing action. After explicit approval, follow the official `ray publish` flow from a standalone Git checkout or prepare the extension directory in a fork of `raycast/extensions`. It authenticates and opens a public pull request for review; it does not guarantee Store acceptance. Do not run `publish` as part of these checks. Use the attribution required by the working session on commits and the pull-request description.
+The existing PR was updated under the user's explicit publication authorization. For a future first submission, follow the official `ray publish` flow from a standalone Git checkout or prepare the extension directory in a fork of `raycast/extensions`. It authenticates and opens a public pull request for review; it does not guarantee Store acceptance. Do not run `publish` as part of these checks. Use the attribution required by the working session on commits and the pull-request description.
 
 Official references:
 
