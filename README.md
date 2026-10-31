@@ -42,7 +42,7 @@ Use `ARGO_HOME=/private/path` to isolate an installation, or `serve --port PORT`
 
 ### Load the Raycast extension
 
-The extension is being prepared for the public Raycast Store as a self-configured companion UI. See the [Store preparation and standalone build guide](docs/raycast-store.md). It has not been submitted or listed.
+The extension has a [draft Raycast Store submission](https://github.com/raycast/extensions/pull/32995) as a self-configured companion UI. It is not listed or release-ready. The pinned runtime still needs the client-revocation security patch before Store merge. See the [Store submission and standalone build guide](docs/raycast-store.md).
 
 ```sh
 npm run dev --workspace extensions/raycast

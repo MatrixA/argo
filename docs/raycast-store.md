@@ -1,4 +1,6 @@
-# Raycast Store submission preparation
+# Raycast Store submission
+
+[Draft Store PR #32995](https://github.com/raycast/extensions/pull/32995) was submitted on 2026-10-31. It is not approved, listed or ready for merge. The pinned-runtime security patch and dedicated native Agent acceptance remain publication gates.
 
 Argo is prepared as a **self-configured companion extension**. The Store installs only the Mac UI. The separately installed bridge, connector, native Agent and loopback transport remain under the user's control. No hosted Argo service, model account, tunnel or background system service is bundled.
 
