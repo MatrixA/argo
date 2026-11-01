@@ -57,3 +57,12 @@ The extension now validates the request ID with the shared protocol schema and p
 The new regression sends production Codex adapter IDs through the actual Raycast Hub, loopback HTTP bridge, connector WebSocket and Codex JSON-RPC adapter into a fake native process. It checks approvals, denial, question answers, exact native ID types and no repeated response. This is protocol integration acceptance, not a real Codex runtime/model or native multi-client approval-completion test.
 
 A separately named temporary Raycast extension also used the production approval component with a Codex-format colon-bearing ID. Enter delivered exactly one `allow` with the unchanged ID, and the fixture resolution appeared in the conversation. No command ran. The fixture never connected to a real user Agent.
+
+
+## Approval history layout, 2026-11-01
+
+Completed and expired interactions no longer render above conversation messages. The conversation retains pending and submitted requests and has a single history entry below its messages. A separate read-only view displays 20 history records initially, expands only on explicit action and searches across all records in the fetched snapshot. Records are not deleted and no decisions are available in history. The bridge still returns the full interaction snapshot; the UI batch size is not backend pagination.
+
+Automated view regressions cover a hundred completed requests alongside active requests and the latest reply, selection fallback when an approval resolves, explicit history expansion, full-history search and preserving submitted or unknown-clock pending requests outside completed history.
+
+An isolated actual Raycast fixture containing 65 resolved approvals, one pending request and one reply showed only the active request, reply and single history entry in the main view. The latest reply stayed selected. The history view opened read-only, explicit Show More expanded it from 20 to 40 records, and its search found a record outside the first visible batch. No real Agent request or user conversation was used.
