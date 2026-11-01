@@ -75,3 +75,11 @@ Codex command, directory, reason, operation, file changes and permission rules n
 Regressions cover command formatting, permission nulls and deny rules, file grant warnings, unknown fields, malformed and deeply nested JSON, embedded fences/images/HTML, unchanged original content and the existing Enter action. This is a UI-only update compatible with the unchanged v0.1.4 bridge.
 
 An isolated actual Raycast fixture displayed command, file-change, network and filesystem permission previews and the production approval review. Command, working directory and reason appeared in separate labeled sections. The complete original-parameters page opened read-only with its original correlation IDs and no Allow or Deny action. No decision was submitted, command executed or real Agent connected. Independent review found a deeply nested JSON serialization crash; a failing regression reproduced it before the original-text fallback fix, and independent re-verification passed.
+
+## Approval submission navigation, 2026-11-02
+
+Store review identified that opening Original Parameters while an approval decision was sending could put a new page above the still-mounted review. A successful response then popped that page and left the review's own Back action inactive. The approval now hides only its original-parameters navigation while busy. Read-only inspection remains available before submission and returns after an unsuccessful response. Decisions, request validation and native Back handling are unchanged.
+
+A production-component regression failed before the fix and passed afterward. It covers pending submission, live request invalidation while still busy, accepted completion, unsuccessful completion and restored original inspection. Existing late-response/unmount and duplicate-activation regressions also pass.
+
+An isolated actual Raycast fixture held a synthetic response open, verified that the sending action menu had no Original Parameters entry, then released the response and returned to its parent conversation. It used the production Approval component but no bridge, real Agent, command or model. This is navigation acceptance, not native approval-completion evidence.
