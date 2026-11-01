@@ -301,3 +301,52 @@ test("live isolated app-server rejoin (no model requests)", { skip: process.env.
     await rm(root, { recursive: true, force: true }); await rm(socketDir, { recursive: true, force: true });
   }
 });
+
+test("Raycast HTTP decisions reach Codex RPC with colon-bearing IDs and cannot execute twice", async () => {
+  const { startBridge } = await import("../packages/bridge/src/server.js");
+  const { secret } = await import("../packages/bridge/src/store.js");
+  const { Connection } = await import("../packages/connector/src/connection.js");
+  const { Hub } = await import("../extensions/raycast/src/core.js");
+  const root = await mkdtemp(join((await import("node:os")).tmpdir(), "argo-codex-http-"));
+  const token = secret();
+  const bridge = await startBridge({ database: join(root, "bridge.sqlite"), token, port: 0 });
+  const grant = bridge.store.createGrant("Synthetic Codex HTTP", "codex");
+  const connection = new Connection({ version: 1, adapter: "codex", ...grant, url: bridge.url }, join(root, "outbox.sqlite"));
+  const hub = new Hub({ url: bridge.url, token });
+  const events: AgentEvent[] = [];
+  let adapter: Awaited<ReturnType<typeof createCodexAdapter>> | undefined;
+  try {
+    adapter = await createCodexAdapter({ threadId: THREAD, transportFactory: () => new JsonRpc(fake("interactions")) }, event => {
+      events.push(event); connection.emit(event);
+    });
+    connection.start(adapter);
+    await connection.ready();
+    await waitFor(() => bridge.store.snapshot(grant.bindingId).interactions.length === 8);
+    const snapshot = await hub.snapshot(grant.bindingId);
+    const approvals = snapshot.interactions.filter(i => i.title === "Codex approval (once)" && !i.detail.includes('"grantRoot":"/"') && !i.detail.includes("terminal resolves"));
+    const question = snapshot.interactions.find(i => i.kind === "question" && i.questions?.[0]?.question === "Which?")!;
+    assert.equal(approvals.length, 3);
+    for (const request of [...approvals, question]) {
+      assert.match(request.requestId, /^codex:[\w-]+:[a-f0-9]{64}$/);
+      const answer = request.kind === "question" ? { answers: { [request.questions![0]!.id]: ["one"] } } : { decision: request.detail.includes('"kind":"writeStdin"') ? "deny" as const : "allow" as const };
+      await hub.answerInteraction(grant.bindingId, snapshot.session.generation, request, answer);
+      await assert.rejects(hub.answerInteraction(grant.bindingId, snapshot.session.generation, request, answer), /already submitted/);
+    }
+    const responses = () => events.filter(e => e.type === "message").map(e => JSON.parse(e.text) as { id: string | number; result?: any });
+    await waitFor(() => [7, "7", "file/id with spaces", "question"].every(id => responses().some(r => r.id === id)));
+    assert.deepEqual(responses().find(r => r.id === 7)?.result, { decision: "accept" });
+    assert.deepEqual(responses().find(r => r.id === "7")?.result, { decision: "decline" });
+    assert.deepEqual(responses().find(r => r.id === "file/id with spaces")?.result, { decision: "accept" });
+    assert.deepEqual(responses().find(r => r.id === "question")?.result, { answers: { "native question / 1": { answers: ["one"] } } });
+    for (const nativeId of [7, "7", "file/id with spaces", "question"]) assert.equal(responses().filter(r => r.id === nativeId).length, 1);
+  } finally {
+    hub.close();
+    await adapter?.close();
+    await connection.close();
+    // Stop the fake native transport before closing the bridge database.
+    // Connection.close deliberately does not stop the original Agent.
+    await waitFor(() => !bridge.store.get(grant.bindingId).online);
+    await bridge.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
