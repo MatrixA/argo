@@ -66,3 +66,12 @@ Completed and expired interactions no longer render above conversation messages.
 Automated view regressions cover a hundred completed requests alongside active requests and the latest reply, selection fallback when an approval resolves, explicit history expansion, full-history search and preserving submitted or unknown-clock pending requests outside completed history.
 
 An isolated actual Raycast fixture containing 65 resolved approvals, one pending request and one reply showed only the active request, reply and single history entry in the main view. The latest reply stayed selected. The history view opened read-only, explicit Show More expanded it from 20 to 40 records, and its search found a record outside the first visible batch. No real Agent request or user conversation was used.
+
+
+## Approval readability, 2026-11-01
+
+Codex command, directory, reason, operation, file changes and permission rules now use labeled sections instead of a single compact JSON blob. Main previews, approval review and history share the renderer. Opaque thread/turn/item IDs remain in a separate complete original-parameters view. Unknown fields remain visible. The original details are not mutated, and original-parameter inspection is read-only. A code fence longer than embedded backtick runs keeps untrusted Agent content literal. Malformed or unfamiliar input falls back to literal display, not a missing summary.
+
+Regressions cover command formatting, permission nulls and deny rules, file grant warnings, unknown fields, malformed and deeply nested JSON, embedded fences/images/HTML, unchanged original content and the existing Enter action. This is a UI-only update compatible with the unchanged v0.1.4 bridge.
+
+An isolated actual Raycast fixture displayed command, file-change, network and filesystem permission previews and the production approval review. Command, working directory and reason appeared in separate labeled sections. The complete original-parameters page opened read-only with its original correlation IDs and no Allow or Deny action. No decision was submitted, command executed or real Agent connected. Independent review found a deeply nested JSON serialization crash; a failing regression reproduced it before the original-text fallback fix, and independent re-verification passed.
