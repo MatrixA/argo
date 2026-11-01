@@ -40,3 +40,9 @@ The ordinary reproducible non-model gates remain `npm test`, the extension test 
 ## Public release installation
 
 After v0.1.4 was published, an anonymous download of its installer completed a clean-home installation with real production dependencies. The published launcher started a fresh bridge; a separate byte-forward loopback endpoint passed signed discovery, Mac pairing, exact synthetic attach/next/ack/reply and client revocation. This post-publication check is a protocol/install fixture, separate from the actual local Claude model acceptance above. Both temporary homes were removed.
+
+## Approval lifecycle regression, 2026-11-01
+
+The Mac extension now keeps approval review subscribed to its exact bridge, binding and session generation. It checks a fresh authoritative snapshot before every decision and shows distinct reasons for expiration, prior submission/resolution, disconnection, changed session and changed parameters. Time comparison uses the existing bridge HTTP Date header with monotonic elapsed time instead of the Mac wall clock. Missing bridge time blocks decisions. This is compatible with the published v0.1.4 bridge; no runtime assets or immutable tags are changed.
+
+An isolated, separately named Raycast extension displayed the production approval component against a disposable synthetic connector. Enter delivered exactly one `allow` decision and no command ran. A separate real HTTP/connector check verified successful delivery, rejection after resolution and rejection after expiry. The open Raycast detail also removed Allow after a synthetic terminal-resolution event. Automated view tests cover live invalidation, expiry without another event, explicit feedback on Enter, suppressing retries after unknown delivery and preventing late submissions from popping a view after the review closes. These checks do not establish native Codex or Claude permission completion. No real user approval, credential or conversation was used.
