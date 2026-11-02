@@ -1,6 +1,6 @@
 # Raycast Store submission
 
-[Store PR #32995](https://github.com/raycast/extensions/pull/32995) was submitted on 2026-10-31. The updated submission is ready for reviewer assessment, not approved or listed. The current candidate pins the patched v0.1.4 runtime and has dedicated real local Claude acceptance. Codex populated-thread and native multi-client approval acceptance remain unverified.
+[Store PR #32995](https://github.com/raycast/extensions/pull/32995) was submitted on 2026-10-31. The updated submission is ready for reviewer assessment, not approved or listed. The current candidate adds direct Herdr terminal control alongside Argo bridges, pins the patched v0.1.4 bridge runtime and has dedicated real local Claude acceptance. Codex populated-thread and native multi-client approval acceptance remain unverified.
 
 Argo is prepared as a **self-configured companion extension**. The Store installs only the Mac UI. The separately installed bridge, connector, native Agent and loopback transport remain under the user's control. No hosted Argo service, model account, tunnel or background system service is bundled.
 
@@ -42,9 +42,10 @@ The exporter copies only extension source, assets, Store metadata, standalone ma
 
 ## Preparation verification
 
-Latest extension verification on 2026-11-02. Dedicated native Claude message/context acceptance remains dated 2026-10-31:
+Latest extension verification on 2026-11-03. Dedicated native Claude message/context acceptance remains dated 2026-10-31:
 
-- A fresh standalone export installed with `npm ci --ignore-scripts`, passed `ray lint`, passed all 58 extension tests and completed the official distribution build with TypeScript checking.
+- A fresh standalone export installed with `npm ci --ignore-scripts`, passed `ray lint`, passed all 103 extension tests and completed the official distribution build with TypeScript checking.
+- Direct Herdr discovery, current output, task input, single-step permission navigation/confirmation, Unicode dialog text, recent reopen, persistent uncertainty without replay, post-fix sending and interruption passed in the actual Raycast app against an isolated real HC core and non-model terminal fixture. HC sends terminal input, not native approval transactions. External SSH and real model approval completion remain unverified. Existing Agent sessions and credentials were not used.
 - Repository backend regression: 55 passed and one optional native Codex test skipped, including protocol snapshot and safe-export regressions. The bridge CLI smoke test passed. That regression run made no paid model request. Separately, the user-authorized dedicated local Claude acceptance made real model calls and verified same-session context recall.
 - Review feedback is covered by regressions for reconnect snapshots, durable retry IDs, custom discovery ports, generated preference types, and confirmed-rejection recovery. Rejected sends keep their draft; uncertain or previously queued attempts retain their original ID.
 - Approval review now owns a live request subscription, uses bridge-relative time, refreshes after rejection and distinguishes expiry, prior submission/resolution, changed parameters, changed session and disconnection. Regressions cover time skew, submit-time races, unknown delivery and live invalidation. Actual Raycast Enter delivered exactly one synthetic allow; real loopback HTTP rejected resolved and expired requests. Native multi-client approval completion is still not claimed.

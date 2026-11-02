@@ -4,6 +4,22 @@ Continue an existing Claude Code or Codex session from Raycast, whether that Age
 
 Argo is a loopback companion bridge (on your Mac or a server), a lightweight Agent connector, and a native Raycast extension. It does not call a model API, replace your Agent, require tmux, or upload conversations to an Argo cloud.
 
+## Herdr terminals, directly in Raycast
+
+The extension also connects directly to an existing **Herdr App / herdr-core (`hc`)** Unix socket. No Argo bridge, connector, or pairing code is needed for this source. Open Herdr, then open **Agent Sessions**. **All Sources / Argo Bridges / Herdr** filters the unified list. The list includes remote terminals already configured in HC; Argo does not create remote connections or copy HC credentials.
+
+- **Terminal Output** shows a literal current-screen capture, not reconstructed chat history. Automatic refresh never scrolls the terminal. Explicit history capture may scroll the original interface and restores it according to HC.
+- **Compose Task** sends only to a reported idle Agent with HC's idle condition and `force:false`. Blocked prompts have a separate **Respond in Raycast** workflow. Unreported programs use an explicitly reviewed terminal-input flow instead of pretending they are idle Agents.
+- **Terminal Controls** displays the actual prompt and sends one explicit key at a time. Navigate with Up, Down or Tab, refresh, then explicitly send Enter, Escape, a letter, number or custom chord. No Allow/Deny shortcut is guessed and no Enter is appended to keys.
+- **Respond to Current Prompt** reviews the screen and your answer before explicitly submitting text with `force:true`. Only this dedicated dialog workflow uses force. **Interrupt Terminal** uses HC's interrupt operation and reports its outcome without escalating to kill.
+- HC has no idempotency or atomic approval transaction. Every input has a persisted attempt marker before transmission. Unknown delivery blocks further input across closing and reopening, never automatically resends, and requires inspecting the latest output before explicit acknowledgment. Acknowledgment sends nothing.
+
+HC target identity is the owning core's permanent ID plus terminal address, with the host core pinned too. Renames do not retarget input. Process replacement or disconnection invalidates open controls. Fresh screen checks reduce races but cannot eliminate changes while HC queues input. Plain text can lose color-only highlights, so Argo never invents a selected option. “Key sent” does not mean “approved.”
+
+The client discovers the official default socket, `HC_SOCKET`, or the optional **Herdr Socket Path** preference. GUI applications may not inherit shell environment variables. Custom sessions/configured socket locations can use that explicit preference. Discovery never invokes HC commands that autostart a core. Socket ownership and private directory boundaries are checked; HC itself has no separate per-client password or sandbox. Never expose its raw API publicly.
+
+Existing native Claude/Codex bridge behavior remains independent and unchanged. HC output and terminal writes do not enter the bridge's conversation store or native approval protocol. HC compatibility targets generation 1 with negotiated methods and features, developed against core 0.1.17 and App 0.1.12. See [local acceptance](docs/local-acceptance.md) for verified boundaries.
+
 ## Requirements
 
 - Node.js 22.13 or later, npm, and Raycast on macOS.
