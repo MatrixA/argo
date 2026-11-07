@@ -55,7 +55,11 @@ test("authenticated bridge routes, persists and revokes one exact session",async
     await until(()=>received.some(c=>c.type==="answer"));
     const stale={generation:"wrong",messageId:randomUUID(),text:"no"};assert.equal((await request(path+"/messages","POST",stale)).status,409);
     const controller=new AbortController();const events=await fetch(bridge.url+`/v1/events?after=${snapshot.cursor}`,{headers:{Authorization:`Bearer ${token}`},signal:controller.signal});
-    assert.equal(events.status,200);const reader=events.body!.getReader();const chunk=await reader.read();assert.match(new TextDecoder().decode(chunk.value),/id: /);controller.abort();
+    assert.equal(events.status,200);const reader=events.body!.getReader();
+    // Network chunks need not align with SSE events, including on newer Node versions.
+    const timeout=setTimeout(()=>controller.abort(),5000);let stream="";
+    try {while(!stream.includes("id: ")){const chunk=await reader.read();if(chunk.done)break;stream+=new TextDecoder().decode(chunk.value);}assert.match(stream,/id: /);}
+    finally {clearTimeout(timeout);controller.abort();}
     await request(path,"DELETE");await until(()=>!bridge.store.authenticate(credential.bindingId,credential.token));
     assert.equal((await request(path+"/messages","POST",{generation,messageId:randomUUID(),text:"revoked"})).status,409);
   } finally {await connection?.close();await bridge.close();rmSync(directory,{recursive:true,force:true});}
