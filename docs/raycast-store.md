@@ -27,11 +27,10 @@ Export reviewed public source to a **new, nonexistent directory**:
 node scripts/prepare-raycast-store.mjs /ABSOLUTE/FRESH/argo
 npm --prefix /ABSOLUTE/FRESH/argo ci --ignore-scripts
 npm --prefix /ABSOLUTE/FRESH/argo run lint
-npm --prefix /ABSOLUTE/FRESH/argo test
 npm --prefix /ABSOLUTE/FRESH/argo run build
 ```
 
-The exporter copies only extension source, assets, Store metadata, standalone manifest/lockfile, configuration and documentation. It does not copy credentials, `.context`, runtime databases, installed dependencies or the enclosing repository. The destination is created exclusively, never overwritten. Exporting and building do not publish anything.
+The exporter copies production extension source, assets, Store metadata, configuration and documentation. It excludes `src/*.test.ts`, removes the `test` script and test-only `tsx` dependency from the exported manifest, and regenerates the exported lockfile offline without installing packages or running lifecycle scripts. Tests and their runner remain in the Argo development workspace and run before export. The source lockfile pins retained dependency versions; the exporter needs npm and its existing package cache. It does not copy credentials, `.context`, runtime databases, installed dependencies or the enclosing repository. The destination is created exclusively, never overwritten. Exporting and building do not publish anything.
 
 ## Submission materials
 

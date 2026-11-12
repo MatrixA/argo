@@ -1,5 +1,5 @@
 // Export only reviewed public extension files. Does not publish or open a PR.
-import { copyFileSync, lstatSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
+import { copyFileSync, lstatSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
@@ -14,7 +14,8 @@ function collect(directory) {
     const path = join(directory, name), stat = lstatSync(join(source, path));
     if (stat.isSymbolicLink()) throw new Error(`No symlinks allowed: ${path}`);
     if (stat.isDirectory()) collect(path);
-    else if (stat.isFile()) files.push(path);
+    else if (stat.isFile() && !name.endsWith(".test.ts")) files.push(path);
+    else if (stat.isFile()) continue;
     else throw new Error(`Unexpected input: ${path}`);
   }
 }
@@ -30,5 +31,11 @@ for (const file of files) {
   mkdirSync(dirname(join(target, file)), { recursive: true });
   copyFileSync(join(source, file), join(target, file));
 }
+// Keep development tests in Argo, but omit their command and runner from the Store.
+delete manifest.scripts.test;
+delete manifest.devDependencies.tsx;
+writeFileSync(join(target, "package.json"), JSON.stringify(manifest, null, 2) + "\n");
+// Reconcile the copied lock without upgrading packages or running install scripts.
+execFileSync("npm", ["install", "--package-lock-only", "--ignore-scripts", "--workspaces=false", "--offline", "--no-audit", "--no-fund"], { cwd: target, stdio: "pipe" });
 console.log(`Prepared standalone Store source: ${target}`);
-console.log("Not submitted. Run npm ci, npm run lint, npm test and npm run build there before review.");
+console.log("Not submitted. Run repository tests separately, then npm ci, npm run lint and npm run build in the export before review.");
