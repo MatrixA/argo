@@ -36,7 +36,7 @@ The exporter copies production extension source, assets, Store metadata, configu
 
 - `extensions/raycast/README.md`: prerequisites, self-configuration, first pairing, limitations, privacy and removal.
 - `extensions/raycast/CHANGELOG.md`: initial public submission with the required merge-date placeholder.
-- `extensions/raycast/metadata/`: PNG screenshots at 2000 × 1250, showing a disposable bridge, synthetic approval, and a dedicated real local Claude context-recall conversation after cleanup. No existing user conversation, pairing secret or credential is included.
+- `extensions/raycast/metadata/`: fresh 2000 × 1250 PNGs saved by Raycast Capture Window with Save to Metadata. They show current signed bridge discovery, the actual pending approval-review view, and a connected conversation with compact status icons and message-only Markdown details. The unmodified production components use a disposable local bridge and connector-backed synthetic examples. No existing user conversation, pairing secret or credential is included.
 - Public macOS manifest, explicit dependencies, standalone npm lockfile, ESLint/Prettier configuration, distribution build and publication scripts.
 
 ## Preparation verification
@@ -53,8 +53,16 @@ Latest extension verification on 2026-11-03. Dedicated native Claude message/con
 - Completed/expired approvals and questions now live in a separate read-only history, 20 at a time with explicit expansion and full-history search. Pending/submitted requests remain in the conversation; messages keep their latest-reply selection. No runtime storage or protocol change is needed.
 - Codex request previews, approval review and completed history share structured command/directory/reason/permissions formatting. Complete unchanged details remain available in a separate read-only original-parameters view. Code fences keep embedded Agent markup inert; unknown fields remain visible. The original-parameters action is hidden while an approval decision is sending, preventing its successful completion from popping a newly opened page.
 - Both the repository and standalone dependency audits reported zero vulnerabilities after applying the minimatch override.
-- The screenshot metadata passed Raycast's dimensions/format validation and was visually inspected. Screenshots use disposable data and a dedicated local Claude acceptance session, never an existing user task. The local-context screenshot shows offline state after its bridge was cleaned up.
+- The earlier screenshot set passed dimensions/format validation and used disposable data plus a dedicated local Claude acceptance session. Its offline post-cleanup context image has been replaced by the current connected example described below.
 - The standalone distribution build loaded in the actual Raycast app. Its discovery screen, rescan action and action menu were exercised. Earlier screenshots covered UI-only acceptance. A separate dedicated real local Claude fixture now verifies model replies and context recall; it never targets an existing user task. See [local acceptance](local-acceptance.md).
+
+## Screenshot refresh, 2026-11-13
+
+All three metadata images were captured again from the current extension through the official Capture Window command with Save to Metadata enabled. The command was invoked through its own copied Raycast deeplink, without adding or changing a global hotkey. The images use one consistent system theme and wallpaper. Original captures are retained privately before byte-for-byte copies to the canonical metadata filenames.
+
+Discovery displays “Signed identity · Use a trusted forward · Pair once”. Approval displays the actual live pending review, including command, working directory and reason. The conversation stays connected and shows compact status icons, readable example message prefixes, a rendered table and message-only details without the previous status metadata panel.
+
+The temporary development registration uses production source unchanged, isolated preferences, an absent HC socket and a single private discovery port. Its real bridge and connector transports supply synthetic example content and a pending request. These screenshots demonstrate the current UI, not model-generated accessibility results or native approval completion. No task or approval decision was submitted. Earlier dedicated real Claude acceptance remains a separate historical check.
 
 ## Submission status and boundaries
 
