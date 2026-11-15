@@ -203,3 +203,91 @@ All final captures were visually inspected and verified as 2000 × 1250 PNGs. Th
 The safe-export regression suite passed. A fresh standalone Store export passed a locked offline install with lifecycle scripts disabled, official Raycast lint including metadata validation, and the distribution build with TypeScript checking. Its complete public-file comparison differs from the previous Store head only in the three metadata PNGs. Production source, manifests, dependency locks and development tests are unchanged.
 
 The screenshot bridge and development watcher were stopped. The disposable extension was removed through official Raycast Settings. Its registration/support paths and Settings search entry were verified absent. The private fixture root was removed after checking its contents, closed port and absence of open handles. Original Settings search and capture preference were restored. Production Argo remains installed with identical support-file hashes. No Raycast database was edited.
+
+## Screenshot and image comment source acceptance
+
+Verified on 2026-11-15 in an isolated worktree. This source adds a separate Screenshot and Comment command, manual image selection, image-aware drafts, authenticated attachment transport and optional Herdr uploads. It does not publish a new fixed runtime release.
+
+A dedicated Claude Code cooperative-pull session attached to a private temporary bridge using its own Bash session identity. The client sent a randomly generated code as PNG pixels and a comment asking for that code without including the answer. The test session received an Agent-local image path and returned the exact image code. The original native identity was unchanged through the completed reply, then the dedicated Agent explicitly left. The configured CLI model alias used the existing user model route. This verifies the Claude Code pull integration; it is not a claim about every model provider or Channel/App Server runtime.
+
+| Image reading check | Observed result |
+| --- | --- |
+| Fixture | Random six-digit code, present only in PNG pixels |
+| Image-only answer | `325487`, exactly matching the private fixture expectation |
+| User comment | `Read the attached image and return only its six-digit code.` |
+| Adapter | Real Claude Code cooperative pull, dedicated session |
+| Identity | Unchanged before and after the completed reply |
+| User tasks | No messages sent to existing tasks |
+| Earlier setup attempts | Shortened the Unix socket directory; corrected the isolated test's file-read scope |
+| Model cost | Earlier attempts reported $0.16704 combined; final attempt capped at $0.65 |
+| Total allowed ceiling | $0.81704, below the approved $1 budget |
+| Final accounting limitation | Final CLI cost output was unavailable after the test Agent left and the harness stopped polling |
+
+The first attempts exposed test-environment setup issues, not image-delivery successes. The successful run reached a completed correct reply before the explicit unbind. Its harness subsequently observed the revoked binding during teardown. A bridge shutdown regression test now ensures registered WebSocket close handlers drain before SQLite is closed.
+
+Automated attachment checks use real HTTP/WebSocket transport and exact Agent-side file bytes. They cover maximum-size payloads, digest and metadata identity, atomic rollback, token scope and revocation, old-bridge negotiation, private file boundaries, quotas and retention. Channel/MCP and Codex localImage checks use protocol fixtures, not a paid real Channel or populated Codex runtime. Herdr checks cover optional method negotiation, remote returned paths, upload/send phases, readiness and identity changes after upload, input locks, original display text versus wire echo, and stale-view draft preservation.
+
+Desktop acceptance uses a separately named development extension and a dedicated fixture bridge. The fixture's replies are explicitly labeled as UI responses without model inference. No installed production extension, runtime service or existing session was replaced. The actual session catalogue showed only Image Acceptance Fixture, and opening it then Command-N displayed the production Compose form with Message and Image controls. No GUI fixture message was sent. Subsequent accessibility queries could no longer obtain Raycast, Preview or the temporary fixture window; native window metadata listed those windows as off-screen. Therefore manual picker completion, the complete region-capture-to-composer flow, preview/remove/replace interactions and global H binding are not accepted as verified. No safe screenshot of the completed flow was produced. Screen capture preflight in the shell returned true, so this is not recorded as a confirmed Screen Recording permission denial.
+
+The production extension and existing J/K/L hotkeys were not changed. H still needs configuration in official Raycast Settings once the source-backed command is installed. The disposable development extension uses the separate name Argo Image Acceptance. Its watcher and fixture processes were stopped; its registration was left in place because official Settings removal was not accessible. No Raycast database was edited.
+
+Real external SSH image reading, a live registered Claude Channel and a live populated Codex shared-runtime vision turn remain unverified. Herdr remote transport is covered by fixtures against the installed terminal.put schema, not an external remote model read.
+
+
+| Final source check | Result |
+| --- | --- |
+| Root tests | 62 passed; one opt-in live Codex test skipped |
+| Raycast extension tests | 204 passed |
+| TypeScript | Root and extension checks passed |
+| Official Raycast lint | Manifest, icons, metadata, ESLint and Prettier passed |
+| Raycast build | Passed |
+| Public CLI smoke | Start, pair, exact-session connector, multiline send, reply, history and detach passed |
+| Generated protocol / whitespace | Synchronization and diff checks passed |
+| Fresh standalone Store export | Locked install without lifecycle scripts, official lint and distribution build with TypeScript passed |
+
+All model runs were dedicated acceptance sessions. The earlier setup failures and final teardown accounting limitation remain recorded above. No commit, push, runtime publication or fixed-tag rewrite was performed.
+
+## Inline image input refinement
+
+Verified on 2026-11-15 in the separately named Argo Image Acceptance development extension. Screenshot and Comment now returns to the existing conversation input. The right side shows an image icon and **Image attached**, with no filename or private path. Command-N remains voluntary multiline editing. Native bridge and Herdr conversations share the same attachment controls. Empty-conversation help also renders its intended paragraph breaks.
+
+The desktop run selected a region containing only the dedicated fixture image. The original comment remained in the conversation input, and no message was submitted while attaching the screenshot. After an explicit Return, the dedicated fixture received the original comment and byte-for-byte identical captured PNG. Its reply identifies itself as a UI fixture without model inference. The attachment indicator and matching draft cleared after successful submission. No existing user task received input, and this refinement did not run another paid vision test.
+
+The captured fixture and conversation input were saved under the ignored `.context/` directory and visually inspected. A cropped input-bar screenshot shows the compact attachment indication. Native screenshot-to-input-to-fixture submission is now accepted; global H binding, live Herdr desktop interaction and external model/runtime coverage remain outside this desktop check.
+
+Preview, change, removal and manual selection are covered by production-component tests, including canceled selection, duplicate activation, closing during import, failed durable writes and uncertain-delivery locks. Complete desktop interaction with those management controls remains unverified: accessibility lost the Raycast window during those steps. The initial short-lived development watcher and fixture were stopped by task time limits, then restarted for the successful capture/submission check. This is not recorded as an image-capability or Screen Recording permission failure.
+
+| Refinement source check | Result |
+| --- | --- |
+| Root tests | 62 passed; one opt-in live Codex test skipped |
+| Raycast extension tests | 207 passed |
+| TypeScript | Root and extension passed |
+| Official Raycast lint | Passed |
+| Raycast build | Passed |
+| Protocol synchronization and whitespace | Passed |
+
+Production Argo and its installed runtime were not replaced. Existing global shortcuts were not changed. No runtime release, fixed tag, commit or push was performed for this refinement.
+
+The owned development watcher, private bridge/connector and fixture window were stopped after acceptance. The fixture bridge's closed port and absent fixture window process were checked. The separate development-extension registration remains; no Raycast database was edited.
+
+## Direct image controls in the search bar
+
+Verified on 2026-11-15 in the separate Argo Image Acceptance extension. Clicking the right-hand **Image attached** control now opens **Remove Image**, **Preview Image** and **Change Image** directly. These reuse the existing Actions handlers, including durable attachment removal and uncertain-delivery checks. Dropdown selection resets to the attachment label after an action or refused removal.
+
+The desktop check captured only the dedicated fixture window, attached it to a saved comment, opened the right-hand dropdown with a mouse click, and chose **Remove Image**. The image indicator disappeared while the full comment stayed in the original input. Closing and reopening Recent Agent Session restored the same comment without restoring the image. A read-only check of the dedicated bridge confirmed no messages were submitted. No existing user task or paid model was used.
+
+The native menu and removed-image state were saved under `.context/` and visually inspected. Accessibility-only activation did not reliably open the native dropdown, so the accepted interaction used mouse clicks at the controls' reported positions. Earlier screenshot selection attempts expired before the driver selected a region; the completed run selected it within the same driver invocation. These are test-driver limitations, not accepted feature failures.
+
+| Direct-controls check | Result |
+| --- | --- |
+| Raycast extension tests | 209 passed |
+| Root and extension TypeScript | Passed |
+| Official Raycast lint | Passed |
+| Raycast build | Passed |
+| Right-menu removal and Recent reopening | Desktop checked; text retained, attachment absent |
+| Duplicate removal and refused removal | Production-component tests passed |
+| Herdr restored draft and uncertain attempts | Production-component tests passed |
+
+Preview and change dispatch are covered by the component tests and their entries were visible in the native dropdown. Their complete desktop flows remain unverified. The actual J global hotkey was not changed or invoked; the dedicated extension's Recent command was used. Production Argo was not overwritten, and this refinement was not committed or pushed.
+
+The dedicated bridge/connector, development watcher and fixture window were stopped after the check. The bridge port was confirmed closed and the fixture-window process absent. The separate development-extension registration remains; no Raycast database was edited.

@@ -232,3 +232,41 @@ test("a stale writer cannot replace a corrupt durable history with its old snaps
   await assert.rejects(a.begin("one", "question", before), /Nothing was sent/);
   assert.equal(store.data.get(a.storageKey), "invalid existing history");
 });
+
+test("image history stores original comment and metadata while full wire echo is removed from replies", async () => {
+  const store = storage(),
+    c = new HcConversation("image-target", "program", store);
+  const image = { name: "screenshot.png", mimeType: "image/png" as const, size: 100, sha256: "a".repeat(64) };
+  const text = "What is in this screenshot?",
+    wire = `${text}\n\nUse the Read tool to read the attached image at "/remote/terminal/image.png".`;
+  await c.load();
+  await c.begin("image-one", text, before, image, wire);
+  const pending = store.data.get(c.storageKey)!;
+  assert.ok(!pending.includes("/remote/terminal"), "generated path is not stored in history");
+  assert.ok(!pending.includes('"data"'));
+  c.submitted("image-one");
+  c.observe({ ...before, text: `${before.text}❯ ${wire}\nA blue square.`, state: "done", turn: 1 });
+  assert.equal(c.turns[0]!.text, text);
+  assert.deepEqual(c.turns[0]!.image, image);
+  assert.equal(c.turns[0]!.output, "A blue square.");
+  await new Promise((resolve) => setImmediate(resolve));
+  const reopened = new HcConversation("image-target", "program", store);
+  await reopened.load();
+  assert.deepEqual(reopened.turns[0]!.image, image);
+  assert.equal(reopened.turns[0]!.output, "A blue square.");
+});
+
+test("saved image metadata cannot smuggle image bytes into local history", async () => {
+  const store = storage(),
+    c = new HcConversation("image-corrupt", "program", store);
+  await c.load();
+  await c.begin("one", "comment", before);
+  const turns = JSON.parse(store.data.get(c.storageKey)!);
+  turns[0].image = { name: "x.png", mimeType: "image/png", size: 1, sha256: "a".repeat(64), data: "SECRET" };
+  const corrupt = JSON.stringify(turns);
+  store.data.set(c.storageKey, corrupt);
+  const reopened = new HcConversation("image-corrupt", "program", store);
+  await reopened.load();
+  assert.equal(reopened.ready, false);
+  assert.equal(store.data.get(c.storageKey), corrupt);
+});

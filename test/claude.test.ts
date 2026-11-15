@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -38,6 +39,16 @@ test("real MCP subprocess negotiates Channel, binds exact process, relays input 
     await client.callTool({name:"reply",arguments:{message_id:messageId,text:"reply through original MCP process",final:true}});
     await until(()=>bridge.store.snapshot(grant.bindingId).messages.some(m=>m.role==="assistant"));
     const history=bridge.store.snapshot(grant.bindingId).messages;assert.equal(history[0]?.state,"completed");assert.equal(history[1]?.replyTo,"mcp-message");
+    assert.equal(session.capabilities.images,true);
+    const bytes=Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX4kAAAAASUVORK5CYII=","base64");
+    const image={name:"channel.png",mimeType:"image/png",size:bytes.length,sha256:createHash("sha256").update(bytes).digest("hex"),data:bytes.toString("base64")};
+    const imageResult=await fetch(`${bridge.url}/v1/sessions/${grant.bindingId}/messages`,{method:"POST",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},body:JSON.stringify({generation:session.generation,messageId:"channel-image",text:"inspect attachment",image})});
+    assert.equal(imageResult.status,202);await until(()=>inbound.length===2);
+    assert.equal(inbound[1]?.content,"inspect attachment");assert.equal(inbound[1]?.meta.message_id,"channel-image");
+    assert.deepEqual(readFileSync(inbound[1]!.meta.file_path!),bytes);assert.ok(inbound[1]!.meta.file_path!.startsWith(join(directory,"connector","images",grant.bindingId)));
+    await client.callTool({name:"acknowledge",arguments:{message_id:"channel-image"}});
+    await client.callTool({name:"reply",arguments:{message_id:"channel-image",text:"fixture read",final:true}});
+    await until(()=>bridge.store.message(grant.bindingId,"channel-image")?.state==="completed");
     await client.notification({method:"notifications/claude/channel/permission_request",params:{request_id:"abcde",tool_name:"Edit",description:"Edit a test file",input_preview:'{"file_path":"/test/file"}'}});
     await until(()=>bridge.store.snapshot(grant.bindingId).interactions.length===1);
     const response=await fetch(`${bridge.url}/v1/sessions/${grant.bindingId}/interactions/abcde`,{method:"POST",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},body:JSON.stringify({generation:session.generation,decision:"deny"})});assert.equal(response.status,202);

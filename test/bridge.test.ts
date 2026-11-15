@@ -105,3 +105,19 @@ test("history paging does not lose messages created within the same millisecond"
     assert.equal(new Set([...first.messages,...second.messages,...third.messages].map(m=>m.id)).size,405);
   }finally{store.close();rmSync(directory,{recursive:true,force:true});}
 });
+
+test("bridge shutdown drains registered connector close events before closing image storage", async () => {
+  const directory=mkdtempSync(join(tmpdir(),"argo-shutdown-"));
+  const bridge=await startBridge({database:join(directory,"store.sqlite"),token:secret(),port:0});
+  const grant=bridge.store.createGrant("dedicated-shutdown","claude");
+  const socket=new WebSocket(`${bridge.url.replace("http:","ws:")}/v1/connectors/${grant.bindingId}`,{headers:{Authorization:`Bearer ${grant.token}`}});
+  try {
+    await new Promise<void>((resolve,reject)=>{socket.once("open",resolve);socket.once("error",reject);});
+    const registered=new Promise(resolve=>socket.once("message",resolve));
+    socket.send(JSON.stringify({type:"register",version:1,nativeSessionId:"shutdown-fixture",runtimeId:"shutdown-runtime",machine:"fixture",cwd:"/fixture",capabilities:{...caps,images:true}}));
+    await registered;
+    await bridge.close();
+    await new Promise<void>(resolve=>setImmediate(resolve));
+    assert.ok(socket.readyState === WebSocket.CLOSED || socket.readyState === WebSocket.CLOSING);
+  } finally {socket.terminate();rmSync(directory,{recursive:true,force:true});}
+});

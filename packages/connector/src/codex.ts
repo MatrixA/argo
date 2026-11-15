@@ -411,8 +411,8 @@ export async function createCodexAdapter(options: Options, emit: Emit): Promise<
     publishStatus(statusOf(thread.status));
     return {
       nativeSessionId: options.threadId, runtimeId, machine: hostname(), cwd: thread.cwd,
-      capabilities: { send: true, streaming: true, interrupt: true, approvals: true, questions: true },
-      async handle(value) {
+      capabilities: { send: true, streaming: true, interrupt: true, approvals: true, questions: true, images: true },
+      async handle(value,imagePath) {
         const parsed = commandSchema.safeParse(value);
         if (!parsed.success) throw new Error("Invalid Codex command");
         const command = parsed.data;
@@ -423,7 +423,7 @@ export async function createCodexAdapter(options: Options, emit: Emit): Promise<
           try {
             const { turn } = await rpc.request("turn/start", {
               threadId: options.threadId, clientUserMessageId: command.messageId,
-              input: [{ type: "text", text: command.text, text_elements: [] }],
+              input: [{ type: "text", text: command.text, text_elements: [] }, ...(imagePath ? [{ type: "localImage", path: imagePath }] : [])],
             }, z.object({ turn: turnSchema }));
             // ponytail: bounded correlation window, not an exactly-once ledger; the connection owns deduplication.
             if (replies.size >= 1000) replies.delete(replies.keys().next().value!);

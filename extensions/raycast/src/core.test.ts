@@ -124,11 +124,14 @@ test("hub uses bearer auth, rejects redirects, and releases in-flight fetch on c
 
 // Raycast supplies its runtime inside the app, not Node. Evaluate the actual view's
 // declarations with small UI/hook stubs; no Agent credentials or user content are read.
-function viewLogic(names: string[], globals: Record<string, unknown> = {}) {
+function viewLogic(names: string[], globals: Record<string, unknown> = {}, file?: string) {
   const source = ts.createSourceFile(
     "sessions.tsx",
     readFileSync(
-      new URL(names.length === 1 && names[0] === "Compose" ? "./compose.tsx" : "./sessions.tsx", import.meta.url),
+      new URL(
+        file || (names.length === 1 && names[0] === "Compose" ? "./compose.tsx" : "./sessions.tsx"),
+        import.meta.url,
+      ),
       "utf8",
     ),
     ts.ScriptTarget.Latest,
@@ -209,7 +212,11 @@ function viewHarness() {
         Item: Object.assign(member("Item"), { Detail: Object.assign(member("ItemDetail"), { Metadata }) }),
       }),
       Detail: Object.assign(member("Detail"), { Metadata }),
-      Form: Object.assign(member("Form"), { Description: "Description", TextArea: "TextArea" }),
+      Form: Object.assign(member("Form"), {
+        Description: "Description",
+        TextArea: "TextArea",
+        FilePicker: "FilePicker",
+      }),
       ActionPanel: "ActionPanel",
       Action: Object.assign(member("Action"), {
         Push: "Push",
@@ -222,6 +229,8 @@ function viewHarness() {
       DiscoverBridges: "DiscoverBridges",
       SessionList: "SessionList",
       Compose: "Compose",
+      ImageActions: "ImageActions",
+      ImageAccessory: "ImageAccessory",
       Conversation: "Conversation",
       RequestHistory: "RequestHistory",
       Toast: { Style: { Failure: "failure", Success: "success" } },
@@ -1955,4 +1964,385 @@ test("conversation status stays compact while message details retain exact diagn
     assert.ok(detail.includes("````"), "embedded fences must not activate diagnostic HTML");
     assert.equal(views(row).find((view) => view.props.title === "Copy Selected Message")!.props.content, message.text);
   }
+});
+
+test("captured image routes to its frozen recent target or stays attached to explicit session selection", async () => {
+  const captureId = "11111111-1111-4111-a111-111111111111";
+  for (const target of [undefined, { profileId: "frozen", bindingId: "session", connectionKey: "a".repeat(24) }]) {
+    const h = viewHarness();
+    const { SessionCommand } = viewLogic(["SessionCommand"], {
+      ...h.globals,
+      getPreferenceValues: () => ({}),
+      portRange: () => [49120],
+      async getCapture(id: string) {
+        assert.equal(id, captureId);
+        return { target };
+      },
+      LocalStorage: {
+        async getItem() {
+          throw new Error("must not retarget to changed recent session");
+        },
+      },
+      async loadConnection(_storage: unknown, _path: string, id: string) {
+        assert.equal(id, "frozen");
+        return { config: {}, profile: { id }, connectionKey: "a".repeat(24) };
+      },
+      Hub: class {
+        async sessions() {
+          return { sessions: [sessionFixture()] };
+        }
+        close() {}
+      },
+    });
+    const props = { captureId };
+    SessionCommand(props);
+    h.effects[0]!();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    h.reset();
+    const result = SessionCommand(props);
+    assert.equal(result.type, target ? "Conversation" : "SessionList");
+    assert.equal(result.props.captureId, captureId);
+    if (!target) assert.match(result.props.notice, /Screenshot Kept/);
+  }
+});
+
+test("Compose restores a screenshot without sending and preserves it when the target cannot receive images", async () => {
+  const h = viewHarness();
+  const image = { id: "11111111-1111-4111-a111-111111111111", path: "/private/copy.png" };
+  let sends = 0;
+  const { Compose } = viewLogic(["Compose"], {
+    ...h.globals,
+    getImage: async () => image,
+    useNavigation: () => ({ pop() {} }),
+  });
+  const props = {
+    text: "comment",
+    change() {},
+    imageId: image.id,
+    changeImage() {},
+    imageUnavailable: "Upgrade connector",
+    async send() {
+      sends++;
+      return true;
+    },
+  };
+  Compose(props);
+  h.effects.forEach((effect) => effect());
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  h.reset();
+  const form = Compose(props);
+  assert.equal(sends, 0, "restoring an image must never submit automatically");
+  await views(form)
+    .find((v) => v.type === "SubmitForm")!
+    .props.onSubmit();
+  assert.equal(sends, 0, "unsupported images never silently downgrade to text");
+  h.reset();
+  const ready = Compose({ ...props, imageUnavailable: undefined });
+  await views(ready)
+    .find((v) => v.type === "SubmitForm")!
+    .props.onSubmit();
+  assert.equal(
+    sends,
+    0,
+    "the visible capability error preserves the draft until it is reopened or the image is changed",
+  );
+});
+
+test("native screenshot stays in the input, sends its image with Enter, and leaves multiline editing explicit", async () => {
+  for (const supported of [true, false]) {
+    const h = viewHarness(),
+      pushed: View[] = [],
+      requests: any[] = [],
+      released: string[] = [];
+    const id = "11111111-1111-4111-a111-111111111111";
+    const image = {
+      name: "long-private-cache-filename.png",
+      mimeType: "image/png",
+      size: 3,
+      sha256: "digest",
+      data: "png",
+    };
+    const session = sessionFixture();
+    session.capabilities.images = supported;
+    const draft = {
+      ready: true,
+      text: "existing comment",
+      imageId: undefined as string | undefined,
+      change(text: string) {
+        this.text = text;
+      },
+      async changeImage(next?: string) {
+        this.imageId = next;
+      },
+      async prepare(text: string, generation: string, imageId: string, fingerprint: string) {
+        assert.equal(imageId, id);
+        assert.ok(fingerprint.includes("digest"));
+        return { id: "inline-message", text, generation };
+      },
+      async clearIf(text: string, imageId: string) {
+        assert.equal(text, "inline comment");
+        assert.equal(imageId, id);
+        this.text = "";
+        this.imageId = undefined;
+        return true;
+      },
+    };
+    const feed = {
+      snapshot: {
+        session,
+        messages: [{ id: "old-image", text: "earlier comment", role: "user", state: "completed", createdAt: 1, image }],
+        interactions: [],
+      },
+      connection: "live",
+      connectionKey: "bridge-a",
+      async refresh() {},
+      hub: {
+        current: {
+          now: () => Date.now(),
+          mutate: async (...args: any[]) => {
+            requests.push(args);
+          },
+        },
+      },
+    };
+    const { Conversation } = viewLogic(
+      [
+        "project",
+        "title",
+        "sessionStatus",
+        "knownOnline",
+        "messageStatus",
+        "sendUnavailable",
+        "conversationSelection",
+        "interactionGroups",
+        "Conversation",
+      ],
+      {
+        ...h.globals,
+        useHub: () => feed,
+        useDraft: () => draft,
+        LAST_CONVERSATION_KEY: "last-conversation-v1",
+        recentKey: (key: string) => `recent:${key}`,
+        LocalStorage: { async setItem() {} },
+        readImage: async () => image,
+        releaseImage: async (id: string) => {
+          released.push(id);
+        },
+        useNavigation: () => ({ push: (view: View) => pushed.push(view) }),
+      },
+    );
+    const render = () => {
+      h.reset();
+      return Conversation({
+        bindingId: "session",
+        profileId: "server",
+        connectionKey: "bridge-a",
+        captureId: id,
+      });
+    };
+    render();
+    h.effects.splice(0).forEach((effect) => effect());
+    await new Promise<void>((done) => setImmediate(done));
+    let tree = render();
+    assert.equal(pushed.length, 0);
+    assert.equal(requests.length, 0);
+    assert.equal(tree.props.searchText, "existing comment");
+    assert.equal(tree.props.searchBarAccessory.type, "ImageAccessory");
+    assert.equal(tree.props.searchBarAccessory.props.imageId, id);
+    assert.equal(tree.props.searchBarAccessory.props.changeImage, draft.changeImage);
+    assert.equal(draft.imageId, id);
+    const detail = views(tree).find((v) => v.props.detail?.props.markdown?.includes("earlier comment"))!.props.detail;
+    assert.ok(detail.props.markdown.includes("Image attached"));
+    assert.ok(!detail.props.markdown.includes(image.name));
+    tree.props.onSearchTextChange("inline comment");
+    tree = render();
+    await views(tree)
+      .find((v) => v.props.title === "Send Message")!
+      .props.onAction();
+    assert.equal(requests.length, supported ? 1 : 0);
+    if (supported) {
+      assert.equal(requests[0][2].text, "inline comment");
+      assert.equal(requests[0][2].image, image);
+      assert.deepEqual(released, [id]);
+      assert.equal(render().props.searchBarAccessory, undefined);
+    } else {
+      assert.equal(draft.imageId, id);
+      assert.equal(draft.text, "inline comment");
+      assert.deepEqual(released, []);
+    }
+    await views(render())
+      .find((v) => v.props.title === "Compose Message")!
+      .props.onAction();
+    assert.equal(pushed.length, 1);
+    assert.equal(pushed[0]!.type, "Compose");
+  }
+});
+
+test("attachment controls hide names and paths, and removal waits for durable draft changes", async () => {
+  const h = viewHarness(),
+    released: string[] = [],
+    opened: string[] = [],
+    pushed: View[] = [];
+  let fail = true;
+  const { ImageAccessory, ImageActions } = viewLogic(
+    ["ImageAccessory", "ImageActions", "useImageControls"],
+    {
+      ...h.globals,
+      ImagePicker: "ImagePicker",
+      getImage: async () => ({ path: "/private/cache/long-id.png" }),
+      releaseImage: async (id: string) => {
+        released.push(id);
+      },
+      open: async (path: string) => {
+        opened.push(path);
+      },
+      useNavigation: () => ({ push: (view: View) => pushed.push(view) }),
+    },
+    "./image-actions.tsx",
+  );
+  const props = {
+    imageId: "old",
+    async changeImage(id?: string) {
+      assert.equal(id, undefined);
+      if (fail) throw new Error("Previous input is uncertain");
+    },
+  };
+  assert.equal(views(ImageAccessory(props)).find((v) => v.type === "DropdownItem")!.props.title, "Image attached");
+  h.reset();
+  const tree = ImageActions(props);
+  const action = (title: string) =>
+    views(tree)
+      .find((v) => v.props.title === title)!
+      .props.onAction();
+  await action("Preview Image");
+  assert.deepEqual(opened, ["/private/cache/long-id.png"]);
+  await action("Remove Image");
+  assert.deepEqual(released, [], "failed durable removal keeps the attachment referenced");
+  fail = false;
+  await action("Remove Image");
+  assert.deepEqual(released, ["old"]);
+  await action("Change Image");
+  assert.equal(pushed[0]!.type, "ImagePicker");
+  assert.equal(pushed[0]!.props.changeImage, props.changeImage);
+});
+
+test("manual image replacement returns to the input only after saving and preserves the old image on failure or cancel", async () => {
+  for (const scenario of ["saved", "failed", "cancel", "closed"]) {
+    const h = viewHarness(),
+      released: string[] = [],
+      changed: (string | undefined)[] = [];
+    let pops = 0,
+      imports = 0;
+    let complete!: (value: object) => void;
+    const { ImagePicker } = viewLogic(
+      ["ImagePicker"],
+      {
+        ...h.globals,
+        importImage: () => {
+          imports++;
+          return new Promise((done) => {
+            complete = done;
+          });
+        },
+        releaseImage: async (id: string) => {
+          released.push(id);
+        },
+        useNavigation: () => ({
+          pop: () => {
+            pops++;
+          },
+        }),
+      },
+      "./image-actions.tsx",
+    );
+    const props = {
+      imageId: "old",
+      async changeImage(id?: string) {
+        if (scenario === "failed") throw new Error("Storage locked");
+        changed.push(id);
+      },
+    };
+    const tree = ImagePicker(props);
+    const cleanup = h.effects[0]!() as unknown as () => void;
+    const picker = views(tree).find((v) => v.type === "FilePicker")!;
+    assert.equal(picker.props.value.length, 0, "no cached filename is shown");
+    picker.props.onChange(scenario === "cancel" ? [] : ["/chosen/image.png"]);
+    if (scenario !== "cancel") {
+      picker.props.onChange(["/duplicate/image.png"]);
+      assert.equal(imports, 1, "duplicate picker events share the same lock");
+      if (scenario === "closed") cleanup();
+      complete({ id: "new", path: "/private/cache/new.png" });
+    }
+    await new Promise<void>((done) => setImmediate(done));
+    assert.deepEqual(changed, scenario === "saved" ? ["new"] : []);
+    assert.deepEqual(released, scenario === "saved" ? ["old"] : scenario === "cancel" ? [] : ["new"]);
+    assert.equal(pops, scenario === "saved" ? 1 : 0);
+  }
+});
+
+test("right attachment menu removes without Actions, keeps failed drafts, and prevents duplicate removal", async () => {
+  const h = viewHarness(),
+    released: string[] = [],
+    opened: string[] = [],
+    pushed: View[] = [];
+  const draft = { text: "keep this comment", imageId: "original" as string | undefined };
+  let fail = true,
+    writes = 0;
+  let complete!: () => void;
+  const { ImageAccessory } = viewLogic(
+    ["ImageAccessory", "useImageControls"],
+    {
+      ...h.globals,
+      ImagePicker: "ImagePicker",
+      getImage: async () => ({ path: "/private/fixture.png" }),
+      releaseImage: async (id: string) => {
+        released.push(id);
+      },
+      open: async (path: string) => {
+        opened.push(path);
+      },
+      useNavigation: () => ({ push: (view: View) => pushed.push(view) }),
+    },
+    "./image-actions.tsx",
+  );
+  const props = {
+    imageId: draft.imageId,
+    async changeImage(imageId?: string) {
+      writes++;
+      if (fail) throw new Error("Previous delivery is uncertain");
+      await new Promise<void>((resolve) => {
+        complete = resolve;
+      });
+      draft.imageId = imageId;
+    },
+  };
+  let menu = ImageAccessory(props);
+  assert.deepEqual(
+    views(menu)
+      .filter((v) => v.type === "DropdownItem")
+      .map((v) => v.props.value),
+    ["attached", "remove", "preview", "change"],
+  );
+  await menu.props.onChange("attached");
+  assert.equal(writes, 0);
+  await menu.props.onChange("remove");
+  assert.equal(draft.imageId, "original");
+  assert.deepEqual(released, []);
+  h.reset();
+  menu = ImageAccessory(props);
+  assert.equal(menu.props.value, "attached", "refused removal restores the image indicator");
+  await menu.props.onChange("preview");
+  assert.deepEqual(opened, ["/private/fixture.png"]);
+  await menu.props.onChange("change");
+  assert.equal(pushed[0]!.type, "ImagePicker");
+  fail = false;
+  const removal = menu.props.onChange("remove");
+  await menu.props.onChange("remove");
+  assert.equal(writes, 2, "one refused attempt and one pending write; duplicates do not write again");
+  assert.deepEqual(released, [], "the cache stays referenced until the durable removal succeeds");
+  complete();
+  await removal;
+  assert.equal(draft.imageId, undefined);
+  assert.equal(draft.text, "keep this comment");
+  assert.deepEqual(released, ["original"]);
 });

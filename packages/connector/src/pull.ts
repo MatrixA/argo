@@ -85,7 +85,7 @@ export async function runPullWorker(options:{session:string;name:string;credenti
   if(credential.adapter!=="claude")throw new Error("Not a Claude credential");
   const credentialLock=options.credentialPath+".lock";
   const fd=openSync(credentialLock,"wx",0o600);writeFileSync(fd,String(process.pid));
-  let connection:Connection|undefined;let pending:Input|undefined;let delivered=false;
+  let connection:Connection|undefined;let pending:Input|undefined;let imagePath:string|undefined;let delivered=false;
   let waiter:{res:import("node:http").ServerResponse;timer:NodeJS.Timeout}|undefined;
   let closing=false;
   const socket=join(directory(),`${digest(credential.bindingId)}.sock`);
@@ -94,7 +94,7 @@ export async function runPullWorker(options:{session:string;name:string;credenti
   const deliver=()=>{
     if(!pending||!waiter)return;
     const target=waiter;waiter=undefined;clearTimeout(target.timer);delivered=true;
-    json(target.res,200,{type:"message",messageId:pending.messageId,text:pending.text,instructions:"Call ack, process in this session, then reply with this messageId and final=true. Do not execute twice."});
+    json(target.res,200,{type:"message",messageId:pending.messageId,text:pending.text,...(pending.image?{image:{metadata:pending.image,path:imagePath}}:{}),instructions:(pending.image?"Use the Read tool on image.path before processing this request. ":"")+"Call ack, process in this session, then reply with this messageId and final=true. Do not execute twice."});
   };
   const server=createServer(async(req,res)=>{
     try {
@@ -120,7 +120,7 @@ export async function runPullWorker(options:{session:string;name:string;credenti
         if(req.url==="/ack")connection!.emit({type:"receipt",commandId:pending.commandId,messageId:pending.messageId,state:"accepted"});
         else if(input.text!==undefined && input.final!==undefined){
           connection!.emit({type:"message",messageId:`reply:${pending.messageId}`,replyTo:pending.messageId,text:input.text,final:input.final});
-          if(input.final){connection!.emit({type:"completed",messageId:pending.messageId});pending=undefined;delivered=false;status("waiting");}
+          if(input.final){connection!.emit({type:"completed",messageId:pending.messageId});pending=undefined;imagePath=undefined;delivered=false;status("waiting");}
         }
         json(res,200,{ok:true});return;
       }
@@ -141,8 +141,8 @@ export async function runPullWorker(options:{session:string;name:string;credenti
   try {
     connection=new Connection(credential,join(home(),"outbox",`${credential.bindingId}.sqlite`));
     connection.onRevoked=()=>{void close();};
-    connection.start({nativeSessionId:session,runtimeId:randomUUID(),machine:hostname(),cwd:process.cwd(),capabilities:{send:true,streaming:false,interrupt:false,approvals:false,questions:false},
-      async handle(command){if(command.type!=="send"||pending)throw new Error("Unsupported pull command");pending=command;delivered=false;status("busy");connection!.emit({type:"receipt",commandId:command.commandId,messageId:command.messageId,state:"submitted"});deliver();},async close(){}} ,options.name);
+    connection.start({nativeSessionId:session,runtimeId:randomUUID(),machine:hostname(),cwd:process.cwd(),capabilities:{send:true,streaming:false,interrupt:false,approvals:false,questions:false,images:true},
+      async handle(command,path){if(command.type!=="send"||pending)throw new Error("Unsupported pull command");pending=command;imagePath=path;delivered=false;status("busy");connection!.emit({type:"receipt",commandId:command.commandId,messageId:command.messageId,state:"submitted"});deliver();},async close(){}} ,options.name);
     status("waiting");await connection.ready();
     await new Promise<void>((resolve,reject)=>{server.once("error",reject);server.listen(socket,resolve);});chmodSync(socket,0o600);
     privateWrite(statePath(session),{session,bindingId:credential.bindingId,socket,pid:process.pid});

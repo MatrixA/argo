@@ -3,7 +3,7 @@ import { timingSafeEqual } from "node:crypto";
 import { WebSocket, WebSocketServer } from "ws";
 import { z } from "zod";
 import { Store } from "./store.js";
-import { answerSchema, connectorFrameSchema, pairingCodeSchema, id, MAX_TEXT, VERSION, type BridgeEvent } from "../../shared/src/protocol.js";
+import { answerSchema, connectorFrameSchema, pairingCodeSchema, id, imageUploadSchema, MAX_IMAGE_BYTES, MAX_TEXT, VERSION, type BridgeEvent } from "../../shared/src/protocol.js";
 
 export interface BridgeOptions { database: string; token: string; port?: number }
 export async function startBridge(options: BridgeOptions) {
@@ -11,6 +11,7 @@ export async function startBridge(options: BridgeOptions) {
   const sockets = new Map<string, WebSocket>();
   const listeners = new Map<ServerResponse, boolean>();
   const wss = new WebSocketServer({ noServer: true, maxPayload: 600_000 });
+  wss.on("headers", headers => headers.push("X-Argo-Images: 1"));
   const sameSecret = (value: string) => {
     const expected=Buffer.from(options.token), actual=Buffer.from(value);
     return actual.length===expected.length && timingSafeEqual(actual,expected);
@@ -34,11 +35,13 @@ export async function startBridge(options: BridgeOptions) {
     if(req.headers.origin!==undefined || !req.headers.host) return false;
     return /^(127\.0\.0\.1|localhost|\[::1\])(?::[0-9]{1,5})?$/.test(req.headers.host);
   }
-  async function body(req:IncomingMessage):Promise<unknown> {
+  async function body(req:IncomingMessage, limit=600_000):Promise<unknown> {
     if(req.headers["content-type"]?.split(";")[0]!=="application/json") throw new Error("Expected application/json");
     let length=0; const chunks:Buffer[]=[];
-    for await(const chunk of req) { length+=Buffer.byteLength(chunk); if(length>600_000) throw new Error("Request too large"); chunks.push(Buffer.from(chunk)); }
-    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    for await(const chunk of req) { length+=Buffer.byteLength(chunk); if(length>limit) throw new Error("Request too large"); chunks.push(Buffer.from(chunk)); }
+    const input=JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    if(length>600_000 && (!input || typeof input!=="object" || !("image" in input)))throw new Error("Request too large");
+    return input;
   }
   const authenticationError = new Error("Authentication required");
   let claimWindow=Date.now(), claimCount=0;
@@ -63,9 +66,18 @@ export async function startBridge(options: BridgeOptions) {
       }
       const token=(req.headers.authorization??"").replace(/^Bearer /,"");
       const admin=sameSecret(token);
+      const imageRoute=/^\/v1\/connectors\/([\w.-]+)\/images\/([\w:.-]+)$/.exec(url.pathname);
+      if(req.method==="GET" && imageRoute) {
+        const binding=id.parse(imageRoute[1]), messageId=id.parse(imageRoute[2]);
+        if(!admin && !store.authenticateClient(token) && !store.authenticate(binding,token)) {json(res,401,{error:"Authentication required"});return;}
+        const bytes=store.image(binding,messageId), image=store.message(binding,messageId)?.image;
+        if(!bytes || !image) {json(res,404,{error:"Image unavailable"});return;}
+        res.writeHead(200,{"Content-Type":image.mimeType,"Content-Length":bytes.length,"Cache-Control":"no-store","X-Content-Type-Options":"nosniff"});
+        res.end(bytes);return;
+      }
       if(!admin && !store.authenticateClient(token)) { json(res,401,{error:"Authentication required"}); return; }
-      const authorizedBody = async () => {
-        const input = await body(req);
+      const authorizedBody = async (limit=600_000) => {
+        const input = await body(req,limit);
         // Body upload yields to revocation requests. Recheck before any mutation.
         if(!admin && !store.authenticateClient(token)) throw authenticationError;
         return input;
@@ -116,8 +128,8 @@ export async function startBridge(options: BridgeOptions) {
         json(res,200,{ok:true}); return;
       }
       if(req.method==="POST" && resource==="messages") {
-        const input=z.object({generation:id,messageId:id,text:z.string().min(1).max(MAX_TEXT).refine(s=>s.trim().length>0,"Message is empty")}).strict().parse(await authorizedBody());
-        const message=store.enqueue(binding,input.generation,input.messageId,input.text); pump(binding); json(res,202,message); return;
+        const input=z.object({generation:id,messageId:id,text:z.string().min(1).max(MAX_TEXT).refine(s=>s.trim().length>0,"Message is empty"),image:imageUploadSchema.optional()}).strict().parse(await authorizedBody(4*Math.ceil(MAX_IMAGE_BYTES/3)+600_000));
+        const message=store.enqueue(binding,input.generation,input.messageId,input.text,input.image); pump(binding); json(res,202,message); return;
       }
       if(req.method==="POST" && resource==="interactions" && requestId) {
         const input=z.object({generation:id,decision:z.enum(["allow","deny"]).optional(),answers:z.record(z.string(),z.array(z.string().max(10_000))).optional()}).strict().parse(await authorizedBody());
@@ -185,6 +197,6 @@ export async function startBridge(options: BridgeOptions) {
   const address=server.address();if(!address||typeof address==="string")throw new Error("No listening port");
   return {
     url:`http://127.0.0.1:${address.port}`,store,
-    async close(){clearInterval(keepalive);for(const listener of listeners.keys())listener.end();for(const socket of sockets.values())socket.terminate();await new Promise<void>(resolve=>server.close(()=>resolve()));wss.close();store.close();},
+    async close(){clearInterval(keepalive);for(const listener of listeners.keys())listener.end();for(const socket of wss.clients)socket.terminate();await new Promise<void>(resolve=>server.close(()=>resolve()));await new Promise<void>(resolve=>wss.close(()=>resolve()));store.close();},
   };
 }

@@ -2,6 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { randomBytes, randomUUID, createHash, createPrivateKey, createPublicKey, generateKeyPairSync, sign, type KeyObject } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { imageMime, imageUploadSchema, type ImageUpload } from "../../shared/src/protocol.js";
 import type { AgentEvent, BridgeEvent, Capabilities, Command, ConnectorFrame, Interaction, Message, Session, Snapshot, Status } from "../../shared/src/protocol.js";
 
 export const hash = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -40,6 +41,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS clients (hash TEXT PRIMARY KEY, created INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS messages (binding TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL, created INTEGER NOT NULL, PRIMARY KEY(binding,id));
+      CREATE TABLE IF NOT EXISTS images (binding TEXT NOT NULL, id TEXT NOT NULL, data BLOB NOT NULL, completed INTEGER, PRIMARY KEY(binding,id));
       CREATE TABLE IF NOT EXISTS commands (id TEXT PRIMARY KEY, binding TEXT NOT NULL, data TEXT NOT NULL, state TEXT NOT NULL, created INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS interactions (binding TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(binding,id));
       CREATE TABLE IF NOT EXISTS receipts (binding TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY(binding,id));
@@ -119,7 +121,7 @@ export class Store {
     const { tokenHash: _token, runtimeId: _runtime, inFlight, runtimeStatus: _status, ...publicData } = session;
     return {...publicData,...(inFlight && this.message(session.id,inFlight)?.state==="unknown" ? {uncertainMessageId:inFlight} : {})};
   }
-  list(): Session[] { return this.allStored().filter(s => !s.revoked).map(s => this.publicSession(s)); }
+  list(): Session[] { return this.allStored().filter(s => !s.revoked).map(s => { this.cleanImages(s.id); return this.publicSession(s); }); }
   createGrant(name: string, adapter: Session["adapter"]): {bindingId:string;token:string} {
     const token = secret();
     const session: StoredSession = {
@@ -181,6 +183,7 @@ export class Store {
     const session = this.get(binding); session.revoked = true; session.online = false; session.status = "offline";
     this.saveSession(session);
     this.db.prepare("UPDATE commands SET state='cancelled' WHERE binding=? AND state='queued'").run(binding);
+    this.db.prepare("DELETE FROM images WHERE binding=?").run(binding);
     this.publish(binding, "revoked");
   }
   private checked(binding: string, generation: string) {
@@ -189,21 +192,44 @@ export class Store {
     if (!session.online) throw new Error("Agent is offline");
     return session;
   }
-  enqueue(binding: string, generation: string, messageId: string, text: string): Message {
+  private cleanImages(binding: string) {
+    this.db.prepare("DELETE FROM images WHERE binding=? AND completed<=?").run(binding, Date.now() - 7 * 24 * 60 * 60_000);
+  }
+  image(binding: string, messageId: string): Uint8Array | undefined {
+    if (this.get(binding).revoked) throw new Error("Binding revoked");
+    this.cleanImages(binding);
+    return this.db.prepare("SELECT data FROM images WHERE binding=? AND id=?").get(binding, messageId)?.data as Uint8Array | undefined;
+  }
+  enqueue(binding: string, generation: string, messageId: string, text: string, upload?: ImageUpload): Message {
     const session = this.checked(binding, generation);
-    if (!session.capabilities.send || ["connecting", "unknown", "error"].includes(session.status)) throw new Error("Session is not ready for input");
+    this.cleanImages(binding);
+    let image: Message["image"], bytes: Buffer | undefined;
+    if (upload !== undefined) {
+      const { data, ...metadata } = imageUploadSchema.parse(upload);
+      bytes = Buffer.from(data, "base64");
+      if (bytes.toString("base64") !== data || bytes.length !== metadata.size || createHash("sha256").update(bytes).digest("hex") !== metadata.sha256 || imageMime(bytes) !== metadata.mimeType) throw new Error("Image bytes do not match metadata");
+      image = metadata;
+    }
     const existing = this.message(binding, messageId);
     if (existing) {
-      if (existing.text !== text || existing.role !== "user") throw new Error("Message ID already used for different content");
+      if (existing.text !== text || existing.role !== "user" || JSON.stringify(existing.image) !== JSON.stringify(image)) throw new Error("Message ID already used for different content");
       return existing;
     }
+    if (!session.capabilities.send || ["connecting", "unknown", "error"].includes(session.status)) throw new Error("Session is not ready for input");
+    if (image && !session.capabilities.images) throw new Error("Update the bridge and connector to send images");
     const count = this.db.prepare("SELECT count(*) AS n FROM commands WHERE binding=? AND state='queued'").get(binding);
     if (Number(count?.n) >= 100) throw new Error("Queue is full; no messages were discarded");
-    const message: Message = { id: messageId, role: "user", text, state: "queued", createdAt: this.nextMessageTime(binding) };
-    const command: Command = { type: "send", commandId: randomUUID(), messageId, text };
+    const message: Message = { id: messageId, role: "user", text, state: "queued", createdAt: this.nextMessageTime(binding), ...(image ? { image } : {}) };
+    const command: Command = { type: "send", commandId: randomUUID(), messageId, text, ...(image ? { image } : {}) };
     this.db.exec("BEGIN IMMEDIATE");
-    try { this.saveMessage(binding, message); this.addCommand(binding, command); this.db.exec("COMMIT"); }
-    catch (e) { this.db.exec("ROLLBACK"); throw e; }
+    try {
+      if (bytes) {
+        const used = Number(this.db.prepare("SELECT COALESCE(sum(length(data)),0) AS n FROM images WHERE binding=?").get(binding)?.n);
+        if (used + bytes.length > 100 * 1024 * 1024) throw new Error("Binding image quota is full (100 MiB)");
+        this.db.prepare("INSERT INTO images VALUES (?,?,?,NULL)").run(binding, messageId, bytes);
+      }
+      this.saveMessage(binding, message); this.addCommand(binding, command); this.db.exec("COMMIT");
+    } catch (e) { this.db.exec("ROLLBACK"); throw e; }
     this.publish(binding, "message"); return message;
   }
   answer(binding: string, generation: string, requestId: string, answer: Extract<Command,{type:"answer"}>["answer"]) {
@@ -291,7 +317,12 @@ export class Store {
         if (command.type === "send") {
           const message = this.message(binding,command.messageId);
           if (message && !["completed","unknown"].includes(message.state)) { message.state=event.state; message.detail=event.detail; this.saveMessage(binding,message); }
-          if (["unknown","failed"].includes(event.state)) session.status=event.state === "unknown" ? "unknown" : "error";
+          if (event.state === "failed") {
+            this.db.prepare("UPDATE images SET completed=COALESCE(completed,?) WHERE binding=? AND id=?").run(Date.now(),binding,command.messageId);
+            if (session.inFlight === command.messageId) {
+              session.inFlight = null; session.status = session.runtimeStatus === "ready" ? "ready" : "error";
+            }
+          } else if (event.state === "unknown") session.status = "unknown";
         }
       }
     }
@@ -304,7 +335,7 @@ export class Store {
     if (event.type === "completed") {
       if (event.messageId) {
         const message = this.message(binding,event.messageId);
-        if (message?.role === "user") { message.state=event.error?"failed":"completed"; message.detail=event.error; message.turnId=event.turnId; this.saveMessage(binding,message); }
+        if (message?.role === "user") { this.db.prepare("UPDATE images SET completed=COALESCE(completed,?) WHERE binding=? AND id=?").run(Date.now(),binding,event.messageId); message.state=event.error?"failed":"completed"; message.detail=event.error; message.turnId=event.turnId; this.saveMessage(binding,message); }
         if (session.inFlight === event.messageId) { session.inFlight=null; session.status=event.error?"error":"ready"; }
       }
     }
@@ -325,6 +356,7 @@ export class Store {
   message(binding:string,id:string):Message|undefined { const row=this.db.prepare("SELECT data FROM messages WHERE binding=? AND id=?").get(binding,id); return row?JSON.parse(String(row.data)) as Message:undefined; }
   snapshot(binding:string,before=Number.MAX_SAFE_INTEGER):Snapshot {
     const session=this.get(binding); if(session.revoked) throw new Error("Binding revoked");
+    this.cleanImages(binding);
     const rows=this.db.prepare("SELECT data FROM messages WHERE binding=? AND created<? ORDER BY created DESC,rowid DESC LIMIT 201").all(binding,before);
     const messages=rows.slice(0,200).map(r=>JSON.parse(String(r.data)) as Message).reverse();
     const interactions=this.db.prepare("SELECT data FROM interactions WHERE binding=?").all(binding).map(r=>JSON.parse(String(r.data)) as Interaction).map(i=>i.state==="pending"&&i.expiresAt<=Date.now()?{...i,state:"expired" as const}:i);

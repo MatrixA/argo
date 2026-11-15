@@ -20,6 +20,18 @@ The client discovers the official default socket, `HC_SOCKET`, or the optional *
 
 Existing native Claude/Codex bridge behavior remains independent and unchanged. HC output and terminal writes do not enter the bridge's conversation store or native approval protocol. HC compatibility targets generation 1 with negotiated methods and features, developed against core 0.1.17 and App 0.1.12. See [local acceptance](docs/local-acceptance.md) for verified boundaries.
 
+## Screenshots and image comments
+
+Open **Screenshot and Comment** to select a screen region, then type a comment in the recent session's existing input bar. A compact image icon and **Image attached** indicator appear on its right; capture never opens a separate composer. Configure **Control + Command + Shift + H** in Raycast Settings → Extensions → Argo. Existing Recent Agent Session hotkeys remain available. Capture freezes the recent target before hiding Raycast; a missing target opens session selection with the screenshot retained. Escape cancels without sending.
+
+**Actions → Attach Image** also accepts one existing PNG, JPEG or WebP up to **4 MiB** and returns to the same input after selection. Click **Image attached** at the right of the input to remove, preview or change the attachment directly. The same controls remain in Actions. Filenames and private cache paths stay out of the conversation display. Enter sends your comment with the image; **⌘N** remains optional for multiline editing. Failure preserves the draft. Unknown delivery keeps the original text/image identity and never automatically retries. A failed screenshot command launch is recovered on the next Screenshot and Comment activation.
+
+Images travel as actual bytes to the Agent machine. Updated native bridges/connectors support Claude pull, registered Claude Channels and experimental Codex localImage input. Herdr uses its optional terminal.put method for identified idle/done Claude/Codex Agents, including HC-configured remote terminals. Unsupported targets show an update/capability explanation before sending. An uploaded file alone is not a successful Agent submission or proof of image reading.
+
+**Source update required:** the existing fixed v0.1.4 runtime download predates image support. Build this source and explicitly reconnect the original Agent to use native attachments. Installing this extension alone does not upgrade a remote bridge or connector. Completed native attachments are retained for up to seven days with lazy cleanup and a 100 MiB per-binding budget; pending/unknown attachments remain until completion or unbind. Mac image copies use a private 100 MiB cache with delayed cleanup for released drafts. Herdr files follow terminal lifetime and its upload budget. User originals are never deleted.
+
+See [image delivery and acceptance boundaries](docs/image-attachments-handoff.md).
+
 ## Requirements
 
 - Node.js 22.13 or later, npm, and Raycast on macOS.
@@ -58,7 +70,7 @@ Use `ARGO_HOME=/private/path` to isolate an installation, or `serve --port PORT`
 
 ### Load the Raycast extension
 
-The extension has a [Raycast Store submission](https://github.com/raycast/extensions/pull/32995) as a self-configured companion UI. It is not listed. Runtime v0.1.4 contains the client-revocation patch; Codex native acceptance remains experimental. See the [Store submission and standalone build guide](docs/raycast-store.md).
+Argo is available in the [Raycast Store](https://www.raycast.com/fernando_jacob/argo) as a self-configured companion UI. Its [initial Store submission](https://github.com/raycast/extensions/pull/32995) merged on 2026-11-13. Updates require a separate pull request to `raycast/extensions`; pushing this repository does not update the Store listing. Runtime v0.1.4 contains the client-revocation patch; Codex native acceptance remains experimental. See the [Store update and standalone build guide](docs/raycast-store.md).
 
 ```sh
 npm run dev --workspace extensions/raycast
