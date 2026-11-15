@@ -1,6 +1,6 @@
 # Raycast Store publication and updates
 
-[Argo is published in the Raycast Store](https://www.raycast.com/fernando_jacob/argo). Its [initial Store PR #32995](https://github.com/raycast/extensions/pull/32995) merged on 2026-11-13 as commit `9fe3617a91159f550a60587441745a5a21de435c`. The published extension includes direct Herdr terminal control alongside Argo bridges and pins the patched v0.1.4 bridge runtime. Screenshot comments and input-bar attachment controls are subsequent source changes that need their own Store update PR. Codex populated-thread and native multi-client approval acceptance remain unverified.
+[Argo is published in the Raycast Store](https://www.raycast.com/fernando_jacob/argo). Its [initial Store PR #32995](https://github.com/raycast/extensions/pull/32995) merged on 2026-11-13 as commit `9fe3617a91159f550a60587441745a5a21de435c`. The published extension includes direct Herdr terminal control alongside Argo bridges and pins the patched v0.1.4 bridge runtime. Screenshot comments and input-bar attachment controls are under review in [Store update PR #33548](https://github.com/raycast/extensions/pull/33548). Codex populated-thread and native multi-client approval acceptance remain unverified.
 
 Argo is prepared as a **self-configured companion extension**. The Store installs only the Mac UI. The separately installed bridge, connector, native Agent and loopback transport remain under the user's control. No hosted Argo service, model account, tunnel or background system service is bundled.
 
@@ -73,10 +73,14 @@ The temporary development registration uses production source unchanged, isolate
 - Actual Raycast screenshot, send, direct removal and Recent reopening acceptance is recorded in [local acceptance](local-acceptance.md). Complete manual preview/change flows remain unverified.
 - Export validation did not publish, create a Store update PR, install a production extension, or update any installed runtime.
 
+## Cache review follow-up
+
+Greptile's review of Store PR #33548 identified valid reattachment-cleanup and abandoned-capture retention defects. The follow-up protects persistent references, retains images before saving drafts, expires unreferenced captures, and coordinates cache mutation across command instances with a lock that releases on process exit. The updated source passed 217 extension regressions, TypeScript, standalone export/protocol regressions, Raycast-managed Node compatibility, and a fresh standalone locked install/lint/distribution build. See [the acceptance record](local-acceptance.md#image-cache-lifecycle-review-follow-up) for exact coverage and remaining desktop limits.
+
 ## Submission status and boundaries
 
 - The public `fernando_jacob` Raycast profile was verified. No account was created or changed.
-- The initial submission was reviewed and merged. The Store listing offers Install Extension, and `raycast/extensions/main/extensions/argo` contains the published source. No open Argo Store update PR was found on 2026-11-15.
+- The initial submission was reviewed and merged. The Store listing offers Install Extension, and `raycast/extensions/main/extensions/argo` contains the published source. The subsequent screenshot and image-control update is open as [PR #33548](https://github.com/raycast/extensions/pull/33548).
 - Dedicated real local Claude sending, replies and context recall passed. Cooperative pull keeps tool approvals in the terminal, not Raycast. Codex populated-thread rejoin and native multi-client approval routing remain unverified and are described as experimental.
 - Published v0.1.4 assets were anonymously downloaded and installed in a clean temporary home after publication. Discovery, pairing, synthetic messaging and revocation passed. Existing release assets and immutable tags were not overwritten.
 - The distribution build was reviewed in the actual Raycast app. The listing prominently requires self-configuration.
