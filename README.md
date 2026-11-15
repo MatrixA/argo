@@ -54,6 +54,14 @@ For a new server bridge, prefer signed discovery and one-time Mac pairing above.
 
 Type a short prompt into the conversation's search bar and use **Send Message**. Use **Compose Message** or **⌘N** for longer input. Replies are Markdown details, not the private Raycast AI chat surface. Opening a conversation selects its latest Agent reply. Sending a message automatically selects its matching reply when it arrives and follows subsequent reply updates. Selecting another item stops following until you send again. Only explicitly submitted text is sent. No screen, browser page, or selected text is collected automatically.
 
+For supported Agent requests:
+
+- Open **Review Approval**, inspect the parameters, then press **Enter** for **Allow Request** or **⌘⇧D** for **Deny Request**. There is no second confirmation dialog. Expired or otherwise unavailable requests cannot be approved. Claude cooperative-pull approvals stay in the original terminal; Codex native approval completion remains unverified.
+- Codex previews, approval review and completed history show command, working directory, reason, file changes and permission rules in labeled sections. Unknown fields remain visible. **View Original Parameters** opens the complete unchanged details read-only. This entry is hidden while an approval decision is sending and returns after an unsuccessful response.
+- Pending approvals and submitted requests stay above messages. Completed and expired approvals/questions move to **Approval & Question History** below the conversation. Browse read-only batches of 20, choose **Show More Requests**, or search across all completed records in the fetched snapshot. Nothing is deleted or replayed.
+
+These extension-side approval fixes and layout changes work with the existing **v0.1.4** bridge without a runtime upgrade or restart. Updating the extension does not patch an older bridge; v0.1.3 and older bridges still require the explicit security upgrade to v0.1.4.
+
 The extension can be unloaded or hidden while the Agent continues. The service retains bridge messages and replays events on reconnect.
 
 ## Connect an already-running Claude Code session
