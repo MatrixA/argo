@@ -157,6 +157,7 @@ function hookHarness(name: "useHub" | "useBridges" | "useDraft", globals: Record
       getPreferenceValues: () => ({ configPath: "/private/config.json", portStart: "49120", portEnd: "49121" }),
       portRange: () => [49120, 49121],
       LocalStorage: {},
+      retainImage: async () => {},
       draftKey: (id: string, identity: string) => `draft:${identity}:${id}`,
       randomUUID,
       showToast() {},
@@ -800,4 +801,50 @@ test("a stale native view cannot clear an image or comment saved by another view
   assert.equal(data.get(key), "new comment from another view");
   assert.equal(data.get(`${key}:image`), replacement);
   h.cleanup();
+});
+
+test("native image selection retains bytes before publishing its durable reference and keeps the draft on retention failure", async () => {
+  for (const fail of [false, true]) {
+    const key = "draft:bridge-a:binding";
+    const previous = "11111111-1111-4111-a111-111111111111";
+    const selected = "22222222-2222-4222-a222-222222222222";
+    const data = new Map([
+      [key, "keep comment"],
+      [`${key}:image`, previous],
+    ]);
+    const held = deferred<void>();
+    const retained: string[] = [];
+    const h = hookHarness("useDraft", {
+      retainImage: async (id: string) => {
+        retained.push(id);
+        await held.promise;
+        if (fail) throw new Error("image retention failed");
+      },
+      LocalStorage: {
+        async getItem(key: string) {
+          return data.get(key);
+        },
+        async setItem(key: string, value: string) {
+          data.set(key, value);
+        },
+        async removeItem(key: string) {
+          data.delete(key);
+        },
+      },
+    });
+    h.render("binding", "bridge-a");
+    h.flush();
+    await settle();
+    const saving = h.render("binding", "bridge-a").changeImage(selected);
+    await settle();
+    assert.deepEqual(retained, [selected]);
+    assert.equal(data.get(`${key}:image`), previous, "retain completes before the new reference is published");
+    held.resolve();
+    if (fail) await assert.rejects(saving, /retention failed/);
+    else await saving;
+    assert.equal(data.get(`${key}:image`), fail ? previous : selected);
+    assert.equal(h.render("binding", "bridge-a").imageId, fail ? previous : selected);
+    assert.equal(data.get(key), "keep comment");
+    h.cleanup();
+  }
 });
