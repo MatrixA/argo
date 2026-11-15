@@ -1,6 +1,6 @@
-# Raycast Store submission
+# Raycast Store publication and updates
 
-[Store PR #32995](https://github.com/raycast/extensions/pull/32995) was submitted on 2026-10-31. The updated submission is ready for reviewer assessment, not approved or listed. The current candidate adds direct Herdr terminal control alongside Argo bridges, pins the patched v0.1.4 bridge runtime and has dedicated real local Claude acceptance. Codex populated-thread and native multi-client approval acceptance remain unverified.
+[Argo is published in the Raycast Store](https://www.raycast.com/fernando_jacob/argo). Its [initial Store PR #32995](https://github.com/raycast/extensions/pull/32995) merged on 2026-11-13 as commit `9fe3617a91159f550a60587441745a5a21de435c`. The published extension includes direct Herdr terminal control alongside Argo bridges and pins the patched v0.1.4 bridge runtime. Screenshot comments and input-bar attachment controls are subsequent source changes that need their own Store update PR. Codex populated-thread and native multi-client approval acceptance remain unverified.
 
 Argo is prepared as a **self-configured companion extension**. The Store installs only the Mac UI. The separately installed bridge, connector, native Agent and loopback transport remain under the user's control. No hosted Argo service, model account, tunnel or background system service is bundled.
 
@@ -35,7 +35,7 @@ The exporter copies production extension source, assets, Store metadata, configu
 ## Submission materials
 
 - `extensions/raycast/README.md`: prerequisites, self-configuration, first pairing, limitations, privacy and removal.
-- `extensions/raycast/CHANGELOG.md`: initial public submission with the required merge-date placeholder.
+- `extensions/raycast/CHANGELOG.md`: a new update entry with the required merge-date placeholder, followed by the unchanged published Initial Version history dated 2026-11-13.
 - `extensions/raycast/metadata/`: fresh 2000 × 1250 PNGs saved by Raycast Capture Window with Save to Metadata. They show current signed bridge discovery, the actual pending approval-review view, and a connected conversation with compact status icons and message-only Markdown details. The unmodified production components use a disposable local bridge and connector-backed synthetic examples. No existing user conversation, pairing secret or credential is included.
 - Public macOS manifest, explicit dependencies, standalone npm lockfile, ESLint/Prettier configuration, distribution build and publication scripts.
 
@@ -64,17 +64,38 @@ Discovery displays “Signed identity · Use a trusted forward · Pair once”. 
 
 The temporary development registration uses production source unchanged, isolated preferences, an absent HC socket and a single private discovery port. Its real bridge and connector transports supply synthetic example content and a pending request. These screenshots demonstrate the current UI, not model-generated accessibility results or native approval completion. No task or approval decision was submitted. Earlier dedicated real Claude acceptance remains a separate historical check.
 
+## Update candidate verification (2026-11-15)
+
+- Extension regression tests: 209 passed. Repository tests: 62 passed, with the opt-in live Codex test skipped.
+- Repository and extension TypeScript checks, generated protocol synchronization, and diff whitespace checks passed.
+- A fresh standalone export passed locked installation with lifecycle scripts disabled, official Raycast lint, and distribution build. The export includes Screenshot and Comment and the direct image dropdown controls.
+- The published Initial Version changelog was compared with upstream and preserved exactly. The new update uses its own merge-date placeholder.
+- Actual Raycast screenshot, send, direct removal and Recent reopening acceptance is recorded in [local acceptance](local-acceptance.md). Complete manual preview/change flows remain unverified.
+- Export validation did not publish, create a Store update PR, install a production extension, or update any installed runtime.
+
 ## Submission status and boundaries
 
 - The public `fernando_jacob` Raycast profile was verified. No account was created or changed.
-- The upstream directory and open PR titles had no Argo submission at review time. Store reviewers still decide name and branding acceptance.
+- The initial submission was reviewed and merged. The Store listing offers Install Extension, and `raycast/extensions/main/extensions/argo` contains the published source. No open Argo Store update PR was found on 2026-11-15.
 - Dedicated real local Claude sending, replies and context recall passed. Cooperative pull keeps tool approvals in the terminal, not Raycast. Codex populated-thread rejoin and native multi-client approval routing remain unverified and are described as experimental.
 - Published v0.1.4 assets were anonymously downloaded and installed in a clean temporary home after publication. Discovery, pairing, synthetic messaging and revocation passed. Existing release assets and immutable tags were not overwritten.
 - The distribution build was reviewed in the actual Raycast app. The listing prominently requires self-configuration.
 - Final source, screenshots and public runtime payload were reviewed and scanned before submission. Scans are not a guarantee of safety.
 - Runtime v0.1.4 contains the upload/revocation fix. All active installation prompts pin the new immutable release. Previously running bridges require explicit stop/restart using the new launcher. See [security assessment](security-review.md).
 
-The existing PR was updated under the user's explicit publication authorization. For a future first submission, follow the official `ray publish` flow from a standalone Git checkout or prepare the extension directory in a fork of `raycast/extensions`. It authenticates and opens a public pull request for review; it does not guarantee Store acceptance. Do not run `publish` as part of these checks. Use the attribution required by the working session on commits and the pull-request description.
+The initial PR was updated under the user's explicit publication authorization and is now merged. Future changes must use a new Store update PR rather than pushing to that merged submission.
+
+## Updating the published extension
+
+1. Review and validate the source changes in this repository. The Argo source PR and the Store update PR are separate reviews; updating one does not publish the other.
+2. Add a new `CHANGELOG.md` update heading with `{PR_MERGE_DATE}` as its date and preserve the published Initial Version entry and date.
+3. Create a fresh standalone export and run its locked install, official lint and distribution build using the commands above.
+4. Prepare a new branch in the author's `MatrixA/raycast-extensions` fork from current upstream `raycast/extensions/main`, and update only `extensions/argo` with the reviewed export. Check for upstream contributions before replacing files.
+5. Open an update PR against `raycast/extensions:main`, or use the official `ray publish` flow from a standalone Git checkout. Publishing authenticates with GitHub and opens a public PR. Once reviewers accept and merge it, Raycast automatically publishes the update to the Store.
+
+The earlier `argo-store-submission` branch belongs to the merged initial PR and must not be treated as an open update submission. The verified Store history contains only Initial Version, and the upstream directory has no later contribution as of 2026-11-15. Do not run `publish` as part of validation. Use the attribution required by the working session on commits and the pull-request description.
+
+Store publication updates the Mac extension only. The screenshot feature's native image transport still requires an updated source-built bridge and connector; the fixed v0.1.4 runtime is unchanged. Herdr uses its optional `terminal.put` capability. A Store PR must preserve these prerequisites rather than imply that it upgrades users' runtimes or binds their global shortcuts.
 
 Official references:
 

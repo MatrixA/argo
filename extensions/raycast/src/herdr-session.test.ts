@@ -432,6 +432,8 @@ function componentHarness(names: string[], globals: Record<string, unknown>) {
     Form: Object.assign(member("Form"), { TextField: "TextField", Description: "Description" }),
     Detail: "Detail",
     HcCompose: "HcCompose",
+    ImageActions: "ImageActions",
+    ImageAccessory: "ImageAccessory",
     CustomKey: "CustomKey",
     Icon: {},
     Color: {},
@@ -1560,10 +1562,7 @@ test("HC image send persists upload then fresh baseline then input, with origina
     h.render();
     await settle();
     const rows = views(h.render());
-    assert.match(
-      rows.find((v) => v.props.id?.startsWith("user:"))!.props.detail.props.markdown,
-      /Image attached[\s\S]*screenshot.png/,
-    );
+    assert.match(rows.find((v) => v.props.id?.startsWith("user:"))!.props.detail.props.markdown, /Image attached/);
     const output = rows.find((v) => v.props.id?.startsWith("reply:"))!.props.detail.props.markdown;
     assert.match(output, /A fixture answer/);
     assert.doesNotMatch(output, /Upload screen activity|agent-machine|Use the Read|Use view_image/);
@@ -1709,7 +1708,7 @@ test("old HC and unidentified programs preserve images while text still sends; d
   assert.equal(h.requests.length, 0);
 });
 
-test("valid captured image opens one saved composer, while offline initial pins never send", async () => {
+test("captured image stays beside the ordinary input without opening a composer or sending", async () => {
   for (const offline of [false, true]) {
     const id = randomUUID(),
       h = viewHarness(imageScreen(), undefined, id);
@@ -1724,12 +1723,31 @@ test("valid captured image opens one saved composer, while offline initial pins 
     await settle();
     h.render();
     await settle();
-    assert.equal(h.children.length, 1);
-    assert.equal(h.child()!.props.imageId, id);
+    assert.equal(h.children.length, 0);
+    assert.equal(h.render().props.searchBarAccessory.type, "ImageAccessory");
     assert.equal(JSON.parse(h.store.data.get(`hc-drafts-v1:${hcTargetKey(target)}`)!).imageId, id);
     assert.equal(h.requests.length, 0, "capturing opens a draft and never sends");
-    if (offline) assert.equal(await h.child()!.props.send("comment", () => true, id), false);
-    assert.equal(h.requests.length, 0);
+    if (offline) {
+      h.render().props.onSearchTextChange("comment");
+      assert.equal(
+        views(h.render()).some((v) => v.props.title === "Send Message"),
+        false,
+      );
+      await h.action("Compose Message");
+      assert.equal(await h.child()!.props.send("comment", () => true, id), false);
+      assert.equal(h.requests.length, 0);
+    } else {
+      h.render().props.onSearchTextChange("inline comment");
+      await settle();
+      await h.action("Send Message");
+      assert.deepEqual(
+        h.requests.map((r) => r.method),
+        ["terminal.put", "terminal.send"],
+      );
+      assert.equal(h.requests[0]!.params.data, imageFixture.data);
+      assert.match(h.requests[1]!.params.text, /inline comment/);
+      assert.equal(h.children.length, 0);
+    }
   }
 });
 
@@ -1753,9 +1771,10 @@ test("capture replacement requires confirmation and canceled or uncertain screen
   assert.equal(JSON.parse(h.store.data.get(`hc-drafts-v1:${hcTargetKey(target)}`)!).imageId, oldId);
   assert.equal(h.confirmations.calls[0]!.title, "Replace Draft Image?");
   h.confirmations.result = true;
-  await h.action("Compose with Captured Image");
-  assert.equal(h.child()!.props.imageId, id);
-  assert.equal(h.child()!.props.text, "existing comment");
+  await h.action("Attach Captured Image");
+  assert.equal(h.children.length, 0);
+  assert.equal(h.render().props.searchText, "existing comment");
+  assert.equal(h.render().props.searchBarAccessory.type, "ImageAccessory");
   assert.deepEqual(h.released, [oldId]);
   assert.equal(h.requests.length, 0);
 
@@ -1773,12 +1792,13 @@ test("capture replacement requires confirmation and canceled or uncertain screen
   pending.render();
   assert.equal(pending.children.length, 0);
   assert.match(pending.toasts.at(-1)!.message!, /Previous input is uncertain/);
-  assert.ok(views(pending.render()).some((v) => v.props.title === "Compose with Captured Image"));
+  assert.ok(views(pending.render()).some((v) => v.props.title === "Attach Captured Image"));
   await pending.action("Inspect Latest Output");
   await pending.action("Acknowledge Uncertain Input…");
-  await pending.action("Compose with Captured Image");
-  assert.equal(pending.child()!.props.imageId, pendingId);
-  assert.equal(pending.child()!.props.text, "pending comment");
+  await pending.action("Attach Captured Image");
+  assert.equal(pending.children.length, 0);
+  assert.equal(pending.render().props.searchText, "pending comment");
+  assert.equal(pending.render().props.searchBarAccessory.type, "ImageAccessory");
   assert.equal(pending.requests.length, 0);
 });
 
@@ -1899,4 +1919,34 @@ test("restoring after marker cleanup failure preserves newer draft text from a d
   await restored.load();
   assert.equal(restored.drafts.task, "newer separate draft");
   assert.equal(restored.attempt!.imageId, id, "uncertain image remains referenced by its original attempt");
+});
+
+test("right attachment control clears the restored HC image durably without clearing text or bypassing uncertainty", async () => {
+  for (const uncertain of [false, true]) {
+    const h = viewHarness(imageScreen()),
+      id = randomUUID();
+    const key = hcTargetKey(target);
+    h.store.data.set(
+      `hc-drafts-v1:${key}`,
+      JSON.stringify({ task: "comment kept on reopen", answer: "", terminal: "", imageId: id }),
+    );
+    if (uncertain)
+      h.store.data.set(
+        `hc-attempt-v1:${key}`,
+        JSON.stringify({ id: "pending", kind: "task", text: "comment kept on reopen", imageId: id, at: 1 }),
+      );
+    h.render();
+    await settle();
+    const view = h.render();
+    assert.equal(view.props.searchBarAccessory.props.imageId, id);
+    if (uncertain) await assert.rejects(view.props.searchBarAccessory.props.changeImage(undefined), /uncertain/i);
+    else await view.props.searchBarAccessory.props.changeImage(undefined);
+    const restored = local(key, h.store);
+    await restored.load();
+    assert.equal(restored.drafts.imageId, uncertain ? id : undefined);
+    assert.equal(restored.drafts.task, "comment kept on reopen");
+    assert.equal(h.render().props.searchText, "comment kept on reopen");
+    assert.equal(Boolean(h.render().props.searchBarAccessory), uncertain);
+    assert.equal(h.requests.length, 0);
+  }
 });

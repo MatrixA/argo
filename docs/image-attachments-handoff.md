@@ -6,9 +6,9 @@
 
 1. 在 Raycast Settings → Extensions → Argo，为 **Screenshot and Comment** 设置 **Control + Command + Shift + H**。热键由 Raycast 用户设置管理，扩展不会写入默认热键。现有 Recent Agent Session 的 J 入口继续使用。
 2. 激活截图命令，Raycast 隐藏后拖选区域。Escape 取消，不会发送消息。
-3. 截图成功后打开捕获开始时的最近会话及 Compose。输入 comment，预览、移除或更换图片，再明确发送。
+3. 截图成功后回到捕获开始时的最近会话，直接在原输入栏继续写 comment；右侧显示图片图标及 Image attached，不自动打开 Compose，不展示附件文件名或缓存路径。Enter 明确发送文字及图片，⌘N 可主动打开多行编辑。
 4. 没有可用的最近会话时，截图保留在会话选择器中，选择目标后继续编辑。已有图片须确认后替换；已有投递未知的消息禁止换图。
-5. 普通 Compose 的 Image 文件选择器也能添加本地图片。首版支持一张 PNG、JPEG 或 WebP，最多 4 MiB，comment 必填。
+5. 点击输入栏右侧 Image attached，可直接移除、预览或更换图片，无需先打开 ⌘K。移除只清除附件，保留文字草稿；投递未知时仍禁止改动原附件。Actions 中保留相同操作；Attach Image 可手选本地图片，选择并保存后回到原输入位置。首版支持一张 PNG、JPEG 或 WebP，最多 4 MiB，comment 必填。
 
 截图期间打开其他会话不会改变截图原来绑定的目标。启动 Recent 命令失败时，下次激活 Screenshot and Comment 会先恢复已保存的截图。没有任何截图或附件会自动发送。
 

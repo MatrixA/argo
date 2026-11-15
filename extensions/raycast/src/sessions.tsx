@@ -26,6 +26,7 @@ import { DiscoverBridges, Setup } from "./onboarding.js";
 import { portRange } from "./discovery.js";
 import { interactionMarkdown, literal, originalParametersMarkdown } from "./interaction-format.js";
 import { Compose } from "./compose.js";
+import { ImageAccessory, ImageActions } from "./image-actions.js";
 import { getCapture, readImage, releaseImage } from "./images.js";
 import { messageMarkdown } from "./message-format.js";
 import { HcClient, hcTargetKey, type HcTarget } from "./herdr.js";
@@ -1124,7 +1125,7 @@ function Conversation({
       />,
     );
   }
-  async function composeCapture(active: () => boolean = () => true) {
+  async function attachCapture(active: () => boolean = () => true) {
     if (!captureId || !draft.ready) return;
     try {
       if (
@@ -1141,7 +1142,6 @@ function Conversation({
       if (!active()) return;
       await draft.changeImage(captureId);
       if (draft.imageId && draft.imageId !== captureId) await releaseImage(draft.imageId).catch(() => {});
-      if (active()) openCompose(captureId);
     } catch (cause) {
       if (active())
         await showToast({
@@ -1150,7 +1150,7 @@ function Conversation({
           message:
             cause instanceof Error
               ? cause.message
-              : "Could not attach the screenshot. Resolve the saved draft and try Compose with Captured Image.",
+              : "Could not attach the screenshot. Resolve the saved draft and try Attach Captured Image.",
         });
     }
   }
@@ -1158,7 +1158,7 @@ function Conversation({
     if (!captureId || !draft.ready || !generation || openedCapture.current === captureId) return;
     openedCapture.current = captureId;
     let active = true;
-    void composeCapture(() => active);
+    void attachCapture(() => active);
     return () => {
       active = false;
     };
@@ -1190,8 +1190,11 @@ function Conversation({
             openCompose();
           }}
         />
-        {captureId ? (
-          <Action title="Compose with Captured Image" icon={Icon.Image} onAction={() => composeCapture()} />
+        {draft.ready && !busy && !connectionChanged ? (
+          <ImageActions imageId={draft.imageId} changeImage={draft.changeImage} />
+        ) : null}
+        {captureId && captureId !== draft.imageId ? (
+          <Action title="Attach Captured Image" icon={Icon.Image} onAction={() => attachCapture()} />
         ) : null}
         <Action
           title="Jump to Latest Reply"
@@ -1334,6 +1337,9 @@ function Conversation({
       filtering={false}
       isShowingDetail
       searchText={draft.text}
+      searchBarAccessory={
+        draft.imageId ? <ImageAccessory imageId={draft.imageId} changeImage={draft.changeImage} /> : undefined
+      }
       onSearchTextChange={(text) => {
         if (draft.ready) draft.change(text);
       }}
@@ -1370,7 +1376,11 @@ function Conversation({
           subtitle="Compose a message to your existing Agent"
           icon={Icon.Message}
           detail={
-            <List.Item.Detail markdown="## Your Agent replies appear here\n\nPress **⌘N** to compose a message, or type a short draft in the search bar. Sending is always explicit; reconnecting never sends a draft." />
+            <List.Item.Detail
+              markdown={
+                "## Your Agent replies appear here\n\nPress **⌘N** to compose a message, or type a short draft in the search bar. Sending is always explicit; reconnecting never sends a draft."
+              }
+            />
           }
           actions={<ActionPanel>{commonActions()}</ActionPanel>}
         />
@@ -1452,7 +1462,7 @@ function Conversation({
               icon={message.role === "user" ? Icon.Person : Icon.Message}
               detail={
                 <List.Item.Detail
-                  markdown={`${messageMarkdown(message.text)}${message.image ? `\n\n📎 ${safeMarkdown(message.image.name)} · ${(message.image.size / 1024).toFixed(0)} KiB` : ""}`}
+                  markdown={`${messageMarkdown(message.text)}${message.image ? "\n\n📎 Image attached" : ""}`}
                 />
               }
               actions={

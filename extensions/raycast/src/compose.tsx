@@ -1,6 +1,7 @@
 import { Action, ActionPanel, Form, Icon, useNavigation } from "@raycast/api";
 import { useEffect, useRef, useState } from "react";
-import { getImage, importImage, releaseImage, type LocalImage } from "./images.js";
+import { getImage } from "./images.js";
+import { ImageActions } from "./image-actions.js";
 
 export function Compose({
   text,
@@ -26,7 +27,6 @@ export function Compose({
   const [value, setValue] = useState(text);
   const [busy, setBusy] = useState(Boolean(imageId));
   const [selectedId, setSelectedId] = useState(imageId);
-  const [image, setImage] = useState<LocalImage>();
   const [error, setError] = useState<string>();
   const lock = useRef(Boolean(imageId));
   const mounted = useRef(true);
@@ -43,9 +43,6 @@ export function Compose({
     lock.current = true;
     setBusy(true);
     void getImage(selectedId)
-      .then((saved) => {
-        if (active) setImage(saved);
-      })
       .catch((cause) => {
         if (active) setError(cause instanceof Error ? cause.message : "Could not load the image. Your draft is kept.");
       })
@@ -59,35 +56,23 @@ export function Compose({
       active = false;
     };
   }, [selectedId]);
-  async function select(paths: string[]) {
-    if (!changeImage || lock.current || !mounted.current) return;
+  async function select(nextId?: string) {
+    if (!changeImage || lock.current || !mounted.current)
+      throw new Error("The composer is busy or closed. Your previous image is kept.");
     lock.current = true;
     setBusy(true);
-    let next: LocalImage | undefined;
     try {
-      next = paths[0] ? await importImage(paths[0]) : undefined;
-      if (!mounted.current) {
-        if (next) await releaseImage(next.id);
-        return;
+      await changeImage(nextId);
+      if (mounted.current) {
+        setSelectedId(nextId);
+        setError(undefined);
       }
-      await changeImage(next?.id);
-      if (!mounted.current) return;
-      const old = selectedId;
-      setSelectedId(next?.id);
-      setImage(next);
-      setError(undefined);
-      if (old && old !== next?.id) await releaseImage(old).catch(() => {});
-    } catch (cause) {
-      if (next && next.id !== selectedId) await releaseImage(next.id).catch(() => {});
-      if (mounted.current)
-        setError(
-          cause instanceof Error ? cause.message : "Could not save this image. Your previous attachment is kept.",
-        );
     } finally {
       lock.current = false;
       if (mounted.current) setBusy(false);
     }
   }
+
   return (
     <Form
       navigationTitle={title}
@@ -114,8 +99,7 @@ export function Compose({
               }
             }}
           />
-          {image ? <Action.Open title="Preview Image" icon={Icon.Eye} target={image.path} /> : null}
-          {selectedId ? <Action title="Remove Image" icon={Icon.Trash} onAction={() => select([])} /> : null}
+          {changeImage ? <ImageActions imageId={selectedId} changeImage={select} /> : null}
         </ActionPanel>
       }
     >
@@ -131,20 +115,10 @@ export function Compose({
         error={value.length > 100_000 ? "Maximum 100,000 characters" : undefined}
         autoFocus
       />
-      {changeImage ? (
-        <Form.FilePicker
-          id="image"
-          title="Image"
-          value={image ? [image.path] : []}
-          canChooseDirectories={false}
-          allowMultipleSelection={false}
-          onChange={(paths) => {
-            void select(paths);
-          }}
-          info="One PNG, JPEG or WebP up to 4 MiB. Preview, replace or remove it before sending."
-          error={error}
-        />
+      {selectedId ? (
+        <Form.Description title="Image" text="Image attached · Preview, change or remove it in Actions" />
       ) : null}
+      {error ? <Form.Description title="Image Error" text={error} /> : null}
       {imageUnavailable ? <Form.Description title="Image Availability" text={imageUnavailable} /> : null}
     </Form>
   );

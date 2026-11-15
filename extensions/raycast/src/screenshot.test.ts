@@ -10,7 +10,7 @@ const code = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2023 },
 }).outputText;
 
-test("screenshot command freezes the recent session before hiding Raycast and only opens Compose after capture", async () => {
+test("screenshot command freezes the recent session before hiding Raycast and only opens the recent conversation after capture", async () => {
   for (const outcome of ["success", "cancel", "permission", "launch-failure"] as const) {
     const data = new Map([
       [

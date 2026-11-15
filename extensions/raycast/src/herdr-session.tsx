@@ -20,6 +20,7 @@ import { stripVTControlCharacters } from "node:util";
 import { HcClient, HcError, hcImageAgent, hcProgramFingerprint, hcTargetKey } from "./herdr.js";
 import type { HcTarget, HcTerminal } from "./herdr.js";
 import { Compose } from "./compose.js";
+import { ImageAccessory, ImageActions } from "./image-actions.js";
 import { literal } from "./interaction-format.js";
 import { openHerdr } from "./herdr-connection.js";
 import { HcConversation } from "./herdr-conversation.js";
@@ -148,8 +149,7 @@ export function hcScreenMarkdown(screen?: HcScreen, heading?: string): string {
 }
 
 function hcMessageMarkdown(turn: HcTurn, user: boolean): string {
-  if (user)
-    return `${messageMarkdown(sanitizeTerminalText(turn.text))}${turn.image ? `\n\n**Image attached**\n\n${literal(sanitizeTerminalText(`${turn.image.name} · ${turn.image.mimeType} · ${turn.image.size} bytes`))}` : ""}`;
+  if (user) return `${messageMarkdown(sanitizeTerminalText(turn.text))}${turn.image ? "\n\n📎 Image attached" : ""}`;
   if (turn.state === "rejected") return "This message was not submitted. Your draft is kept.";
   if (turn.state === "unknown")
     return "Input delivery is uncertain. Inspect the raw terminal before acknowledging; nothing retries automatically.";
@@ -320,7 +320,7 @@ export class HcLocalState {
       ) {
         this.drafts = latest;
         throw new Error(
-          "An image is already attached or changed in another view. Your screenshot is kept separately; reopen the composer or use Compose with Captured Image to review replacement.",
+          "An image is already attached or changed in another view. Your screenshot is kept separately; reopen the composer or use Attach Captured Image to review replacement.",
         );
       }
       this.drafts = { ...this.drafts, imageId };
@@ -1127,15 +1127,7 @@ function HcSessionView({
         text={local.drafts[kind]}
         change={(text) => local.change(kind, text)}
         imageId={kind === "task" ? local.drafts.imageId : undefined}
-        changeImage={
-          kind === "task"
-            ? async (imageId) => {
-                if (imageId) await getImage(imageId);
-                if (!feed.mounted.current) throw new Error("This terminal view closed. Your image is kept.");
-                await local.changeImage(imageId);
-              }
-            : undefined
-        }
+        changeImage={kind === "task" ? changeTaskImage : undefined}
         imageUnavailable={kind === "task" ? imageUnavailable() : undefined}
         title={
           kind === "answer"
@@ -1192,20 +1184,25 @@ function HcSessionView({
       />,
     );
   }
+  async function changeTaskImage(imageId?: string) {
+    if (imageId) await getImage(imageId);
+    if (!feed.mounted.current) throw new Error("This terminal view closed. Your image is kept.");
+    await local.changeImage(imageId);
+  }
   function imageUnavailable() {
     if (!feed.client.current?.methods.has("terminal.put"))
       return "Image uploads require Herdr with terminal.put. Update Herdr; text remains available.";
     if (!feed.latest.current || !hcImageAgent(feed.latest.current.terminal))
       return "Images require an identified Claude or Codex Agent; arbitrary terminal input is unsupported.";
   }
-  async function composeCapture(active: () => boolean = () => feed.mounted.current) {
+  async function attachCapture(active: () => boolean = () => feed.mounted.current) {
     if (!captureId || !local.ready || storageError || busy) return;
     try {
       await readImage(captureId);
       if (!active()) return;
       if (local.attempt)
         throw new Error(
-          "Previous input is uncertain. Your screenshot is kept; inspect and acknowledge the attempt, then use Compose with Captured Image.",
+          "Previous input is uncertain. Your screenshot is kept; inspect and acknowledge the attempt, then use Attach Captured Image.",
         );
       const previous = local.drafts.imageId;
       let replace = false;
@@ -1221,13 +1218,16 @@ function HcSessionView({
       }
       await local.changeImage(captureId, !replace);
       if (previous && previous !== captureId) void releaseImage(previous).catch(() => {});
-      if (active()) compose("task");
+      if (active()) {
+        setMode("output");
+        setFullWidth(false);
+      }
     } catch (cause) {
       if (active()) {
         setNotice(
           cause instanceof Error
             ? cause.message
-            : "The screenshot could not be attached. Use Compose with Captured Image to try explicitly.",
+            : "The screenshot could not be attached. Use Attach Captured Image to try explicitly.",
         );
         await toastError(cause);
       }
@@ -1247,7 +1247,7 @@ function HcSessionView({
       return;
     seen.current = captureId;
     let canceled = false;
-    void composeCapture(() => !canceled && feed.mounted.current);
+    void attachCapture(() => !canceled && feed.mounted.current);
     return () => {
       canceled = true;
     };
@@ -1523,8 +1523,11 @@ function HcSessionView({
               }
             />
             <Action.CopyToClipboard title="Copy Terminal Target" content={address} />
-            {captureId ? (
-              <Action title="Compose with Captured Image" icon={Icon.Pencil} onAction={() => composeCapture()} />
+            {mode === "output" && local.ready && !storageError && !local.attempt ? (
+              <ImageActions imageId={local.drafts.imageId} changeImage={changeTaskImage} />
+            ) : null}
+            {captureId && captureId !== local.drafts.imageId ? (
+              <Action title="Attach Captured Image" icon={Icon.Pencil} onAction={() => attachCapture()} />
             ) : null}
             <Action
               title="Compose Message"
@@ -1660,6 +1663,11 @@ function HcSessionView({
         if (id) setSelected(id);
       }}
       searchText={mode === "output" ? local.drafts.task : ""}
+      searchBarAccessory={
+        mode === "output" && local.drafts.imageId ? (
+          <ImageAccessory imageId={local.drafts.imageId} changeImage={changeTaskImage} />
+        ) : undefined
+      }
       onSearchTextChange={(text) => {
         if (mode === "output") local.change("task", text);
       }}

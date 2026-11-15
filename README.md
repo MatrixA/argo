@@ -22,9 +22,9 @@ Existing native Claude/Codex bridge behavior remains independent and unchanged. 
 
 ## Screenshots and image comments
 
-Open **Screenshot and Comment** to select a screen region, then add a comment in the recent session's composer. Configure **Control + Command + Shift + H** in Raycast Settings → Extensions → Argo. Existing Recent Agent Session hotkeys remain available. Capture freezes the recent target before hiding Raycast; a missing target opens session selection with the screenshot retained. Escape cancels without sending.
+Open **Screenshot and Comment** to select a screen region, then type a comment in the recent session's existing input bar. A compact image icon and **Image attached** indicator appear on its right; capture never opens a separate composer. Configure **Control + Command + Shift + H** in Raycast Settings → Extensions → Argo. Existing Recent Agent Session hotkeys remain available. Capture freezes the recent target before hiding Raycast; a missing target opens session selection with the screenshot retained. Escape cancels without sending.
 
-Compose also accepts one existing PNG, JPEG or WebP up to **4 MiB**. Add a text comment, preview, replace or remove the image, then explicitly send. Failure preserves the draft. Unknown delivery keeps the original text/image identity and never automatically retries. A failed screenshot command launch is recovered on the next Screenshot and Comment activation.
+**Actions → Attach Image** also accepts one existing PNG, JPEG or WebP up to **4 MiB** and returns to the same input after selection. Click **Image attached** at the right of the input to remove, preview or change the attachment directly. The same controls remain in Actions. Filenames and private cache paths stay out of the conversation display. Enter sends your comment with the image; **⌘N** remains optional for multiline editing. Failure preserves the draft. Unknown delivery keeps the original text/image identity and never automatically retries. A failed screenshot command launch is recovered on the next Screenshot and Comment activation.
 
 Images travel as actual bytes to the Agent machine. Updated native bridges/connectors support Claude pull, registered Claude Channels and experimental Codex localImage input. Herdr uses its optional terminal.put method for identified idle/done Claude/Codex Agents, including HC-configured remote terminals. Unsupported targets show an update/capability explanation before sending. An uploaded file alone is not a successful Agent submission or proof of image reading.
 
@@ -70,7 +70,7 @@ Use `ARGO_HOME=/private/path` to isolate an installation, or `serve --port PORT`
 
 ### Load the Raycast extension
 
-The extension has a [Raycast Store submission](https://github.com/raycast/extensions/pull/32995) as a self-configured companion UI. It is not listed. Runtime v0.1.4 contains the client-revocation patch; Codex native acceptance remains experimental. See the [Store submission and standalone build guide](docs/raycast-store.md).
+Argo is available in the [Raycast Store](https://www.raycast.com/fernando_jacob/argo) as a self-configured companion UI. Its [initial Store submission](https://github.com/raycast/extensions/pull/32995) merged on 2026-11-13. Updates require a separate pull request to `raycast/extensions`; pushing this repository does not update the Store listing. Runtime v0.1.4 contains the client-revocation patch; Codex native acceptance remains experimental. See the [Store update and standalone build guide](docs/raycast-store.md).
 
 ```sh
 npm run dev --workspace extensions/raycast
