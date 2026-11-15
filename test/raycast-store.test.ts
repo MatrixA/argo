@@ -28,6 +28,21 @@ test("Store export contains only standalone public inputs and never overwrites a
     const manifest = readFileSync(join(target, "package.json"), "utf8");
     assert.equal(JSON.parse(manifest).private, undefined);
     assert.equal(JSON.parse(manifest).scripts.build, "ray build -e dist");
+    const exported = JSON.parse(manifest);
+    assert.equal(exported.scripts.test, undefined);
+    assert.equal(exported.devDependencies.tsx, undefined);
+    assert.ok(!readdirSync(join(target, "src")).some((name) => name.endsWith(".test.ts")));
+    const lock = JSON.parse(readFileSync(join(target, "package-lock.json"), "utf8"));
+    assert.deepEqual(lock.packages[""].dependencies, exported.dependencies);
+    assert.deepEqual(lock.packages[""].devDependencies, exported.devDependencies);
+    assert.equal(lock.packages["node_modules/tsx"], undefined);
+    const sourceLock = JSON.parse(readFileSync("extensions/raycast/package-lock.json", "utf8"));
+    for (const [name, entry] of Object.entries(lock.packages)) {
+      if (name) assert.deepEqual(entry, sourceLock.packages[name], `${name} must keep its pinned version and integrity`);
+    }
+    // Development tests and their runner remain in the Argo repository.
+    assert.ok(readdirSync("extensions/raycast/src").some((name) => name.endsWith(".test.ts")));
+    assert.ok(JSON.parse(readFileSync("extensions/raycast/package.json", "utf8")).scripts.test);
     assert.deepEqual(readdirSync(target).sort(), [".prettierignore", ".prettierrc.json", "CHANGELOG.md", "README.md", "assets", "eslint.config.mjs", "metadata", "package-lock.json", "package.json", "src", "tsconfig.json"].sort());
     assert.throws(() => execFileSync(process.execPath, ["scripts/prepare-raycast-store.mjs", target], { stdio: "pipe" }), /Command failed/);
     assert.equal(readFileSync(join(target, "package.json"), "utf8"), manifest);
