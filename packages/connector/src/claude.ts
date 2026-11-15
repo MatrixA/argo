@@ -17,7 +17,7 @@ export function createClaudeChannel(options:{bind:(name:string,url?:string)=>Pro
   const usedPermissions=new Set<string>();
   const mcp=new Server({name:"argo",version:"0.1.0"},{
     capabilities:{experimental:{"claude/channel":{},"claude/channel/permission":{}},tools:{}},
-    instructions:"Argo connects this exact session to Raycast. When asked to bind, call bind with the display name. Never read credential files or include secrets in tool arguments. Inbound <channel> messages carry message_id. Call acknowledge(message_id) when you start processing, and reply(message_id,text,final) to send all progress and final answers back to Raycast; final=true only when done. Do not put the answer only in terminal prose. Before bind, call channel_ready ONLY after the user confirms the startup banner lists server:argo as a registered channel. Ordinary MCP tools alone cannot enable a channel.",
+    instructions:"Argo connects this exact session to Raycast. When asked to bind, call bind with the display name. Never read credential files or include secrets in tool arguments. Inbound <channel> messages carry message_id. If meta.file_path is present, use the Read tool on that local image path before processing the message; the image is part of the request. Call acknowledge(message_id) when you start processing, and reply(message_id,text,final) to send all progress and final answers back to Raycast; final=true only when done. Do not put the answer only in terminal prose. Before bind, call channel_ready ONLY after the user confirms the startup banner lists server:argo as a registered channel. Ordinary MCP tools alone cannot enable a channel.",
   });
   const tool=(name:string,description:string,properties:Record<string,unknown>,required:string[])=>({name,description,inputSchema:{type:"object" as const,properties,required,additionalProperties:false}});
   mcp.setRequestHandler(ListToolsRequestSchema,async()=>({tools:[
@@ -64,12 +64,12 @@ export function createClaudeChannel(options:{bind:(name:string,url?:string)=>Pro
   });
   const adapter:Adapter={
     nativeSessionId:`channel:${runtimeId}`,runtimeId,machine:hostname(),cwd:process.cwd(),
-    capabilities:{send:true,streaming:false,interrupt:false,approvals:true,questions:false},
-    async handle(command) {
+    capabilities:{send:true,streaming:false,interrupt:false,approvals:true,questions:false,images:true},
+    async handle(command,imagePath) {
       if(command.type==="send") {
         pending.set(command.messageId,command);
         emit({type:"status",status:"busy"});
-        await mcp.notification({method:"notifications/claude/channel",params:{content:command.text,meta:{message_id:command.messageId}}});
+        await mcp.notification({method:"notifications/claude/channel",params:{content:command.text,meta:{message_id:command.messageId,...(imagePath?{file_path:imagePath}:{})}}});
         emit({type:"receipt",commandId:command.commandId,messageId:command.messageId,state:"submitted"});
       } else if(command.type==="answer") {
         const expiry=permissions.get(command.requestId);

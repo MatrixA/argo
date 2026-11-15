@@ -5,7 +5,7 @@ export interface Adapter {
   machine: string;
   cwd: string;
   capabilities: Capabilities;
-  handle(command: Command): Promise<void>;
+  handle(command: Command, imagePath?: string): Promise<void>;
   close(): Promise<void>;
 }
 export type Emit = (event: AgentEvent) => void;

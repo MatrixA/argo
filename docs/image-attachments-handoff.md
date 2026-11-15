@@ -1,59 +1,46 @@
-# 待办：在 Raycast 中选择图片，随文字发送给 Agent
+# Raycast 截图与图片 comment
 
-记录日期：2026-11-15。
-状态：需求已记录，留待新会话实现。本轮不开发附件功能。
+记录日期：2026-11-15。源码已实现，包含截图入口、图片草稿以及原生桥接和 Herdr 传输。实际验收范围见 [local-acceptance.md](local-acceptance.md)。尚未发布新的运行时或 Store 版本。
 
-## 用户要的体验
+## 使用流程
 
-在 Argo 的消息输入界面选择图片，输入说明，然后把文字和图片一起发送给当前 Agent。用户不需要离开 Raycast 去终端添加图片，也不需要手动上传或填写远程路径。
+1. 在 Raycast Settings → Extensions → Argo，为 **Screenshot and Comment** 设置 **Control + Command + Shift + H**。热键由 Raycast 用户设置管理，扩展不会写入默认热键。现有 Recent Agent Session 的 J 入口继续使用。
+2. 激活截图命令，Raycast 隐藏后拖选区域。Escape 取消，不会发送消息。
+3. 截图成功后打开捕获开始时的最近会话及 Compose。输入 comment，预览、移除或更换图片，再明确发送。
+4. 没有可用的最近会话时，截图保留在会话选择器中，选择目标后继续编辑。已有图片须确认后替换；已有投递未知的消息禁止换图。
+5. 普通 Compose 的 Image 文件选择器也能添加本地图片。首版支持一张 PNG、JPEG 或 WebP，最多 4 MiB，comment 必填。
 
-建议交互：
+截图期间打开其他会话不会改变截图原来绑定的目标。启动 Recent 命令失败时，下次激活 Screenshot and Comment 会先恢复已保存的截图。没有任何截图或附件会自动发送。
 
-1. 在现有会话中打开撰写消息界面。
-2. 点击“添加图片”，从 Mac 选择图片。
-3. 查看已选附件，能够在发送前移除或更换。
-4. 输入说明并发送，接收端 Agent 能实际读取图片内容。
-5. 失败时保留文字和附件选择，并明确显示投递状态，避免重复发送。
+## 图片实际如何交付
 
-至少支持选择一张图片。首版是否开放多选、是否允许纯图片消息，以及具体格式和大小限制，留待实现时确定。
+Mac 选择图片后先保存不可变私有副本。草稿只保存图片引用；发送前重新验证实际文件、大小、结构格式及 SHA-256 摘要。改动用户原文件不影响已选择的附件。拒绝目录、符号链接、空文件、超限文件及格式不符或结构截断的图片。结构检查不代替原生图片解码。
 
-此前还讨论过“快捷键截图后弹出输入框”。它仍是另一个待定入口，不是本次手动选图需求的验收前提。粘贴图片、拖放图片也未确定为首版范围。
+| 会话接入 | 交付方式 | 前置条件 |
+| --- | --- | --- |
+| Claude cooperative pull | `next` 返回 Agent 机器上的私有图片路径和 Read 指令 | 更新 bridge、connector 与 argo-bind skill，Agent 正在等待 `next` |
+| Claude Channel | 通知携带 `meta.file_path`，接收说明要求使用 Read | 已注册并确认的可用 Channel，更新 bridge 与 connector |
+| Codex shared App Server | 同一次 turn/start 包含 comment 和 localImage | 既有共享运行时已接入，路径对 App Server 可见；仍属实验支持 |
+| Herdr 本地或 HC 已配置远端 | terminal.put 先上传真实字节，再引用返回的目标机器路径 | HC 支持可选 terminal.put，目标为已识别的 Claude/Codex，报告 idle 或 done |
 
-## 已确认的现状
+Mac 本地路径不能代替远端图片。原生桥接把真实字节以独立 HTTP 字段上传并原子保存为 SQLite BLOB。消息、WebSocket 命令和日志只包含元数据，connector 用绑定专属凭据下载到 Agent 机器的私有目录。跨 binding 下载被拒绝，解绑撤销读取。
 
-- 当前 Argo 尚不支持发送图片。之前用户明确暂缓实现，后续 Store 截图更新也没有加入附件能力。
-- Raycast 原生的 Form.FilePicker 可以选择本地文件，支持单选和多选，可以作为图片选择入口。
-- 当前撰写表单只有文字输入，发送回调接收字符串。
-- Argo 的共享发送命令和消息结构目前只有文字，没有图片附件字段。
-- 新增选择控件只是界面部分，还需要打通文件传输和 Agent 接收链路。
+新 bridge 在认证后的 WebSocket upgrade 返回 `X-Argo-Images: 1`。connector 仅在看到此标记时注册图片能力。旧 bridge/connector 仍能处理原有文字消息；没有图片能力的目标会在发送前明确提示更新，绝不静默丢图。
 
-Raycast 官方表单文档：<https://developers.raycast.com/api-reference/user-interface/form>。
+Herdr 上传与输入共用持久任务锁。上传后重新检查 owning core、程序指纹和可输入状态，再捕获 baseline 并以 `force:false` 发送。上传成功不表示消息已提交。Shell、工作中的 Agent，以及权限/认证对话框不会通过普通图片发送入口接收输入。远端路径仅用于接收程序读取，原始 comment 与附件元数据仍独立显示。
 
-## 实现时必须核实的边界
+## 草稿、去重与生命周期
 
-- **SSH 远程会话：** Mac 上的文件路径不能直接供远端使用。需要把实际图片内容送到 Agent 所在机器，再通过该 Agent 支持的输入方式交付。
-- **Agent 差异：** 分别核实 Claude、Codex 和 Herdr/HC 的现有连接方式如何接收图片。不要因为某个模型支持视觉，就假定当前会话接入方式也支持图片。
-- **能力提示：** 目标不支持附件时，在发送前明确说明；不能静默丢弃图片，也不能把路径当作成功交付图片。
-- **投递可靠性：** 延续现有草稿、重复提交保护和不确定投递处理。不要自动重放不确定的文字或图片消息。
-- **文件处理：** 校验实际文件格式、大小和可读性，设计临时文件及远端副本的生命周期。不要把图片二进制塞进普通文本或日志。
-- **兼容性：** 如果扩展共享协议或 bridge/connector，需要考虑已安装运行时的版本兼容及更新提示，不能只更新 Raycast 界面。
-- **验证：** 用隔离测试会话验证，不向用户现有任务发送测试内容。界面选中文件和传输 fixture 通过，都不能单独证明真实 Agent 已读取图片。
+- 原生消息的持久 ID 绑定 comment、图片摘要及完整元数据。相同提交重试不产生第二次执行；相同 ID 换图被拒绝。
+- Herdr 区分 upload 与 send 阶段。关闭、断连、程序变化和投递未知不会自动重放。需检查原 Agent 后按现有显式恢复流程处理。
+- 失败保留文字和附件。旧提交完成不能清掉用户之后输入的新 comment。文件选择或草稿持久化失败时禁止提交。
+- Mac 私有图片缓存上限 100 MiB。确认发送或明确移除后标记为可回收，保留七天恢复窗口，在后续导入时清理。未发送或未知且未释放的草稿不自动删除，用户原始文件不被清理。
+- Bridge 与 connector 各按 binding 限额 100 MiB。完成或明确失败的图片在七天后惰性清理，消息元数据及去重记录保留。排队或未知附件保留到完成或解绑，解绑清理对应字节。Herdr 远端文件随 HC 终端生命周期清理，并有累计上传预算。
 
-## 新会话从哪里开始
+## 版本与验收
 
-先阅读当前实现，再选择最小可行的附件传输方式，不在本记录中预定上传协议或存储方案。
+仓库当前版本号仍为 v0.1.4。旧固定安装 URL 不会获得这次源码更新，不要覆盖现有固定 release 标签。原生图片能力需要从本次源码构建 bridge/connector，并在原 Agent 中显式重新接入。扩展单独更新不代表远端运行时已经支持附件。
 
-- `extensions/raycast/src/compose.tsx`：现有撰写消息表单。
-- `extensions/raycast/src/sessions.tsx`：原生会话的发送和状态处理。
-- `extensions/raycast/src/herdr-session.tsx`、`extensions/raycast/src/herdr.ts`：HC 会话界面与终端输入链路。
-- `packages/shared/src/protocol.ts`：共享命令、消息和能力结构。
-- `packages/bridge/src/server.ts`：桥接服务入口。
-- `packages/connector/src/claude.ts`、`packages/connector/src/codex.ts`、`packages/connector/src/pull.ts`：不同 Agent 接入方式。
+测试覆盖原始字节一致性、最大尺寸、作用域和撤销、摘要碰撞、原子失败、旧握手、私有落盘、格式与路径拒绝、截图取消和失败恢复、冻结最近目标、图片草稿恢复、投递未知、Herdr 上传后的新状态检查，以及纯文字回归。
 
-## 验收目标
-
-用户在 Raycast 内完成“选图、输入说明、发送”。支持的目标 Agent 能收到并使用实际图片，文字和附件对应同一次用户提交。远程目标不依赖 Mac 本地路径。失败、断连、不支持附件和不确定投递均有清晰反馈，现有纯文字会话仍正常工作。
-
-新会话启动提示：
-
-> 请读取 docs/image-attachments-handoff.md，实现 Argo 在 Raycast 内选择图片并随文字发送给 Agent 的体验，先核实当前各类 Agent 接入方式的图片能力与远程传输边界。
+真实图片读取必须通过隔离 Agent 回答只存在于图片像素中的内容。协议 fixture、模拟 App Server/MCP 和编译通过均不能替代真实读图或桌面验收。具体已执行与未执行项统一记录在 local-acceptance.md。

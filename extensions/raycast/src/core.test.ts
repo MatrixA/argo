@@ -1956,3 +1956,85 @@ test("conversation status stays compact while message details retain exact diagn
     assert.equal(views(row).find((view) => view.props.title === "Copy Selected Message")!.props.content, message.text);
   }
 });
+
+test("captured image routes to its frozen recent target or stays attached to explicit session selection", async () => {
+  const captureId = "11111111-1111-4111-a111-111111111111";
+  for (const target of [undefined, { profileId: "frozen", bindingId: "session", connectionKey: "a".repeat(24) }]) {
+    const h = viewHarness();
+    const { SessionCommand } = viewLogic(["SessionCommand"], {
+      ...h.globals,
+      getPreferenceValues: () => ({}),
+      portRange: () => [49120],
+      async getCapture(id: string) {
+        assert.equal(id, captureId);
+        return { target };
+      },
+      LocalStorage: {
+        async getItem() {
+          throw new Error("must not retarget to changed recent session");
+        },
+      },
+      async loadConnection(_storage: unknown, _path: string, id: string) {
+        assert.equal(id, "frozen");
+        return { config: {}, profile: { id }, connectionKey: "a".repeat(24) };
+      },
+      Hub: class {
+        async sessions() {
+          return { sessions: [sessionFixture()] };
+        }
+        close() {}
+      },
+    });
+    const props = { captureId };
+    SessionCommand(props);
+    h.effects[0]!();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    h.reset();
+    const result = SessionCommand(props);
+    assert.equal(result.type, target ? "Conversation" : "SessionList");
+    assert.equal(result.props.captureId, captureId);
+    if (!target) assert.match(result.props.notice, /Screenshot Kept/);
+  }
+});
+
+test("Compose restores a screenshot without sending and preserves it when the target cannot receive images", async () => {
+  const h = viewHarness();
+  const image = { id: "11111111-1111-4111-a111-111111111111", path: "/private/copy.png" };
+  let sends = 0;
+  const { Compose } = viewLogic(["Compose"], {
+    ...h.globals,
+    getImage: async () => image,
+    useNavigation: () => ({ pop() {} }),
+  });
+  const props = {
+    text: "comment",
+    change() {},
+    imageId: image.id,
+    changeImage() {},
+    imageUnavailable: "Upgrade connector",
+    async send() {
+      sends++;
+      return true;
+    },
+  };
+  Compose(props);
+  h.effects.forEach((effect) => effect());
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  h.reset();
+  const form = Compose(props);
+  assert.equal(sends, 0, "restoring an image must never submit automatically");
+  await views(form)
+    .find((v) => v.type === "SubmitForm")!
+    .props.onSubmit();
+  assert.equal(sends, 0, "unsupported images never silently downgrade to text");
+  h.reset();
+  const ready = Compose({ ...props, imageUnavailable: undefined });
+  await views(ready)
+    .find((v) => v.type === "SubmitForm")!
+    .props.onSubmit();
+  assert.equal(
+    sends,
+    0,
+    "the visible capability error preserves the draft until it is reopened or the image is changed",
+  );
+});

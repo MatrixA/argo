@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
+import { createHash } from "node:crypto";
+import { crc32 } from "node:zlib";
 import { chmod, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer, type Socket } from "node:net";
 import { homedir } from "node:os";
@@ -9,6 +11,7 @@ import {
   HcClient,
   HcError,
   hcEntries,
+  hcImageAgent,
   hcProgramFingerprint,
   hcTargetKey,
   resolveHcExecutable,
@@ -17,6 +20,8 @@ import {
   type HcTarget,
   type HcTerminal,
 } from "./herdr.js";
+
+import { MAX_IMAGE_BYTES, type ImageUpload } from "./protocol.js";
 
 type Request = { jsonrpc: string; id: number; method: string; params: Record<string, unknown> };
 const methods = [
@@ -771,4 +776,191 @@ test("optional machine table still rejects explicit null or malformed values", a
       await f.close();
     }
   }
+});
+
+// Parameter and result shapes verified against installed HC 0.1.18's static `hc schema`.
+const png = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aL1cAAAAASUVORK5CYII=",
+  "base64",
+);
+function imageUpload(bytes = png): ImageUpload {
+  return {
+    name: "screenshot.png",
+    mimeType: "image/png",
+    size: bytes.length,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    data: bytes.toString("base64"),
+  };
+}
+
+test("optional HC 0.1.18 terminal.put preserves exact bytes and remote path while old cores retain text", async () => {
+  const image = imageUpload();
+  const f = await fixture((request, socket) => {
+    if (request.method === "hello")
+      reply(socket, request.id, { ...hello, version: "0.1.18", methods: [...methods, "terminal.put"] });
+    else if (request.method === "terminal.put")
+      reply(socket, request.id, { path: "/remote machine/terminal-files/screenshot.png", bytes: png.length });
+    else return;
+    return true;
+  });
+  const client = await HcClient.connect(f.path);
+  try {
+    assert.equal(client.methods.has("terminal.put"), true);
+    assert.deepEqual(await client.put(await f.target(), image), {
+      path: "/remote machine/terminal-files/screenshot.png",
+      bytes: png.length,
+    });
+    const put = f.requests.find((r) => r.method === "terminal.put")!;
+    assert.deepEqual(put.params, { terminal: `${core.id}/t1`, name: image.name, data: image.data });
+    assert.deepEqual(Buffer.from(put.params.data as string, "base64"), png);
+    assert.equal(
+      f.requests.some((r) => r.method === "terminal.send"),
+      false,
+      "upload itself types nothing",
+    );
+  } finally {
+    client.close();
+    await f.close();
+  }
+  const old = await fixture(),
+    oldClient = await HcClient.connect(old.path);
+  try {
+    await assert.rejects(oldClient.put(await old.target(), image), errorKind("incompatible"));
+    await oldClient.request("terminal.send", { terminal: `${core.id}/t1`, text: "old core text", force: false });
+    assert.equal(old.requests.filter((r) => r.method === "terminal.send").length, 1);
+    assert.equal(
+      old.requests.some((r) => r.method === "terminal.put"),
+      false,
+    );
+  } finally {
+    oldClient.close();
+    await old.close();
+  }
+});
+
+test("terminal.put alone accepts a 4 MiB image encoded above the ordinary 1 MiB RPC limit", async () => {
+  // A valid ancillary PNG chunk makes an exact-size image without changing its pixels.
+  const padding = Buffer.alloc(MAX_IMAGE_BYTES - png.length, 97);
+  padding.writeUInt32BE(padding.length - 12, 0);
+  padding.write("tEXt", 4);
+  padding.write("comment\0", 8);
+  padding.writeUInt32BE(crc32(padding.subarray(4, -4)), padding.length - 4);
+  const bytes = Buffer.concat([png.subarray(0, -12), padding, png.subarray(-12)]);
+  const f = await fixture((request, socket) => {
+    if (request.method === "hello") reply(socket, request.id, { ...hello, methods: [...methods, "terminal.put"] });
+    else if (request.method === "terminal.put")
+      reply(socket, request.id, { path: "/remote/full.png", bytes: bytes.length });
+    else return;
+    return true;
+  });
+  const client = await HcClient.connect(f.path);
+  try {
+    assert.equal(bytes.length, MAX_IMAGE_BYTES);
+    await client.put(await f.target(), imageUpload(bytes));
+    assert.deepEqual(
+      Buffer.from(f.requests.find((r) => r.method === "terminal.put")!.params.data as string, "base64"),
+      bytes,
+    );
+    await assert.rejects(
+      client.request("terminal.send", { terminal: `${core.id}/t1`, text: "x".repeat(1_048_576) }),
+      errorKind("protocol"),
+    );
+    await assert.rejects(
+      client.put(await f.target(), imageUpload(Buffer.concat([bytes, Buffer.from([0])]))),
+      errorKind("protocol"),
+    );
+    assert.equal(f.requests.filter((r) => r.method === "terminal.put").length, 1);
+    assert.equal(
+      f.requests.some((r) => r.method === "terminal.send"),
+      false,
+    );
+  } finally {
+    client.close();
+    await f.close();
+  }
+});
+
+test("terminal.put applies permanent owner validation before upload, including disconnected remotes", async () => {
+  let state = "connected";
+  const f = await fixture((request, socket) => {
+    if (request.method === "hello") reply(socket, request.id, { ...hello, methods: [...methods, "terminal.put"] });
+    else if (request.method === "machine.list") reply(socket, request.id, { machines: [{ ...remote, state }] });
+    else if (request.method === "terminal.put")
+      reply(socket, request.id, { path: "/remote/screenshot.png", bytes: png.length });
+    else return;
+    return true;
+  });
+  const client = await HcClient.connect(f.path);
+  try {
+    const target = await f.target();
+    for (const coreId of [core.name, remote.name, "unknown-owner"])
+      await assert.rejects(client.put({ ...target, coreId }, imageUpload()), errorKind("changed"));
+    await assert.rejects(client.put({ ...target, hostCoreId: "replacement" }, imageUpload()), errorKind("changed"));
+    state = "disconnected";
+    await assert.rejects(client.put({ ...target, coreId: remote.id }, imageUpload()), errorKind("offline"));
+    assert.equal(
+      f.requests.some((r) => r.method === "terminal.put"),
+      false,
+    );
+    state = "connected";
+    await client.put({ ...target, coreId: remote.id }, imageUpload());
+    assert.equal(f.requests.find((r) => r.method === "terminal.put")!.params.terminal, `${remote.id}/t1`);
+  } finally {
+    client.close();
+    await f.close();
+  }
+});
+
+test("image upload validates bytes and rejects unsafe remote paths or mismatched lengths without exposing payloads", async () => {
+  for (const response of [
+    { path: "relative.png", bytes: png.length },
+    { path: "/secret/../image.png", bytes: png.length },
+    { path: "/secret/image\n.png", bytes: png.length },
+    { path: "/secret/\u202eimage.png", bytes: png.length },
+    { path: "/", bytes: png.length },
+    { path: "/secret/image.png", bytes: png.length + 1 },
+  ]) {
+    const f = await fixture((request, socket) => {
+      if (request.method === "hello") reply(socket, request.id, { ...hello, methods: [...methods, "terminal.put"] });
+      else if (request.method === "terminal.put") reply(socket, request.id, response);
+      else return;
+      return true;
+    });
+    const client = await HcClient.connect(f.path);
+    try {
+      const target = await f.target(),
+        image = imageUpload();
+      for (const patch of [
+        { sha256: "0".repeat(64) },
+        { size: png.length - 1 },
+        { name: "../secret.png" },
+        { mimeType: "image/jpeg" },
+      ])
+        await assert.rejects(client.put(target, { ...image, ...patch } as ImageUpload));
+      assert.equal(
+        f.requests.some((r) => r.method === "terminal.put"),
+        false,
+      );
+      await assert.rejects(
+        client.put(target, image),
+        (e: unknown) => e instanceof HcError && e.kind === "unknown" && !e.message.includes("secret"),
+      );
+      assert.equal(f.requests.filter((r) => r.method === "terminal.put").length, 1);
+    } finally {
+      client.close();
+      await f.close();
+    }
+  }
+});
+
+test("image support requires identified Claude or Codex evidence and refuses conflicting identities", () => {
+  assert.equal(hcImageAgent({ ...item, argv: ["/usr/local/bin/claude"] }), "claude");
+  assert.equal(hcImageAgent({ ...item, status: { state: "idle", app: "Claude Code" } }), "claude");
+  assert.equal(hcImageAgent({ ...item, argv: ["/usr/bin/codex"] }), "codex");
+  assert.equal(hcImageAgent({ ...item, argv: ["bash", "-lc", "claude"] }), undefined);
+  assert.equal(hcImageAgent({ ...item, argv: ["claude"], status: { state: "idle", app: "codex" } }), undefined);
+  assert.equal(
+    hcImageAgent({ ...item, argv: ["claude"], foreground: { pid: 99, name: "sh", argv: ["sh"], cwd: "/" } }),
+    undefined,
+  );
 });

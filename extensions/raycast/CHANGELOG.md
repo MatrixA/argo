@@ -2,6 +2,10 @@
 
 ## [Initial Version] - {PR_MERGE_DATE}
 
+- Add Screenshot and Comment: select a region, open the frozen recent session with an attachment, add text and explicitly send. Supports a user-configured Control-Command-Shift-H hotkey and safe capture recovery.
+- Add single PNG/JPEG/WebP attachments up to 4 MiB, private immutable drafts, preview/remove/replace, image-aware idempotency, capability checks and actual bytes delivered to native or Herdr Agent machines.
+- Preserve text-only behavior on old runtimes, unknown-delivery safeguards, and bounded attachment retention. Native images require an updated source-built bridge and connector; no new runtime release is published by this change.
+
 - Parse Markdown block structure before escaping prose so list-contained code retains literal URLs and punctuation. Preserve nested lists, quoted code, table source cells and original copy text, with complete literal fallback for excessive nesting.
 
 - Replace native message metadata panels with compact status icons and hover details. Keep failure and uncertainty labels visible, with exact timestamps and diagnostics available in Message Details. Preserve blank-separated nested Markdown lists instead of rendering them as standalone code.

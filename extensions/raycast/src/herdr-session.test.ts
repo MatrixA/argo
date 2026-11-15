@@ -8,8 +8,9 @@ import ts from "typescript";
 import { HcConversation } from "./herdr-conversation.js";
 import { safeMarkdown } from "./core.js";
 import { messageMarkdown } from "./message-format.js";
-import { HcError, hcProgramFingerprint, hcTargetKey, type HcTarget, type HcTerminal } from "./herdr.js";
+import { HcError, hcImageAgent, hcProgramFingerprint, hcTargetKey, type HcTarget, type HcTerminal } from "./herdr.js";
 import { literal } from "./interaction-format.js";
+import { imageAttachmentSchema, type ImageUpload } from "./protocol.js";
 import type { HcLocalState as LocalState, HcScreen } from "./herdr-session.js";
 
 const source = ts.createSourceFile(
@@ -39,9 +40,12 @@ function logic(names: string[], globals: Record<string, unknown> = {}) {
     }).outputText + `\n({${names.join(",")}})`,
     {
       exports: {},
+      Error,
       createHash,
       randomUUID,
       HcError,
+      hcImageAgent,
+      imageAttachmentSchema,
       hcProgramFingerprint,
       hcTargetKey,
       stripVTControlCharacters,
@@ -111,7 +115,7 @@ function storage() {
     },
   };
 }
-const localLogic = logic(["hcOperationLocks", "MAX_INPUT", "HcLocalState"]);
+const localLogic = logic(["hcOperationLocks", "hcDraftWrites", "MAX_INPUT", "HcLocalState"]);
 function local(key: string, store: ReturnType<typeof storage>): LocalState {
   return new localLogic.HcLocalState(key, store);
 }
@@ -482,10 +486,11 @@ function componentHarness(names: string[], globals: Record<string, unknown>) {
     },
   };
 }
-function viewHarness(initial: HcScreen = screen(), onAllSessions?: (onPop?: () => void) => void) {
+function viewHarness(initial: HcScreen = screen(), onAllSessions?: (onPop?: () => void) => void, captureId?: string) {
   const store = storage();
   const requests: Array<{ method: string; params: any }> = [];
-  const toasts: Array<{ title: string }> = [];
+  const toasts: Array<{ title: string; message?: string }> = [];
+  const confirmations = { result: true, calls: [] as Array<{ title: string }> };
   const feed = {
     screen: initial,
     latest: { current: initial },
@@ -494,6 +499,14 @@ function viewHarness(initial: HcScreen = screen(), onAllSessions?: (onPop?: () =
     invalidRef: { current: undefined as string | undefined },
     client: {
       current: {
+        methods: new Set(["terminal.put"]),
+        async put(_target: HcTarget, image: ImageUpload) {
+          requests.push({
+            method: "terminal.put",
+            params: { terminal: `${_target.coreId}/${_target.terminalId}`, name: image.name, data: image.data },
+          });
+          return { path: "/agent-machine/attachments/image.png", bytes: image.size };
+        },
         async request(method: string, params: any) {
           requests.push({ method, params });
           return { status: "blocked", turn: 1, outcome: "still_working", key: "ctrl+c" };
@@ -506,23 +519,44 @@ function viewHarness(initial: HcScreen = screen(), onAllSessions?: (onPop?: () =
     visible: true,
   };
   let child: View | undefined;
+  const children: View[] = [];
+  const images = new Map<string, ImageUpload>();
+  const released: string[] = [];
   const h = componentHarness(["keyRows", "HcSessionView"], {
     useHcScreen: (_target: HcTarget, visible: boolean) => {
       feed.visible = visible;
       return feed;
     },
     LocalStorage: store,
-    showToast: async (toast: { title: string }) => {
+    readImage: async (id: string) => {
+      const image = images.get(id);
+      if (!image) throw new Error("Image missing or unreadable. Nothing was sent.");
+      return image;
+    },
+    getImage: async (id: string) => {
+      const image = images.get(id);
+      if (!image) throw new Error("Image missing or unreadable. Nothing was sent.");
+      return { ...imageMetadata(image), id, path: `/private/mac-cache/${id}.png` };
+    },
+    releaseImage: async (id: string) => {
+      released.push(id);
+    },
+    showToast: async (toast: { title: string; message?: string }) => {
       toasts.push(toast);
+    },
+    confirmAlert: async (alert: { title: string }) => {
+      confirmations.calls.push(alert);
+      return confirmations.result;
     },
     useNavigation: () => ({
       push(view: View) {
         child = view;
+        children.push(view);
       },
     }),
   });
   const render = () => {
-    const view = h.render("HcSessionView", { target, onAllSessions, reopen() {} });
+    const view = h.render("HcSessionView", { target, onAllSessions, captureId, reopen() {} });
     h.flush();
     return view;
   };
@@ -531,7 +565,20 @@ function viewHarness(initial: HcScreen = screen(), onAllSessions?: (onPop?: () =
     assert.ok(action, `Action ${title}`);
     return action.props.onAction();
   };
-  return { ...h, feed, store, requests, toasts, render, action, child: () => child };
+  return {
+    ...h,
+    feed,
+    store,
+    requests,
+    toasts,
+    confirmations,
+    images,
+    released,
+    children,
+    render,
+    action,
+    child: () => child,
+  };
 }
 
 test("real HC view defaults to refresh, sends one explicit key, and changed screen requires another activation", async () => {
@@ -1370,4 +1417,486 @@ test("derived HC replies render Markdown tables while raw screens and dialog rev
   assert.match(reviewed.props.detail.props.markdown, /Current Terminal Dialog/);
   assert.ok(reviewed.props.detail.props.markdown.includes(literal(next.capture.text)));
   assert.equal(h.requests.length, 1);
+});
+
+const imageBytes = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aL1cAAAAASUVORK5CYII=",
+  "base64",
+);
+const imageFixture: ImageUpload = {
+  name: "screenshot.png",
+  mimeType: "image/png",
+  size: imageBytes.length,
+  sha256: createHash("sha256").update(imageBytes).digest("hex"),
+  data: imageBytes.toString("base64"),
+};
+const imageMetadata = (image: ImageUpload) => ({
+  name: image.name,
+  mimeType: image.mimeType,
+  size: image.size,
+  sha256: image.sha256,
+});
+const imageScreen = (agent = "claude") =>
+  screen({
+    terminal: terminal({ argv: [agent], status: { state: "idle", app: agent }, turn: 0 }),
+    capture: { text: "Earlier question\nEarlier answer\n", complete: true, how: "screen" },
+  });
+async function imageComposer(h: ReturnType<typeof viewHarness>, id = randomUUID(), text = "Explain this screenshot") {
+  h.images.set(id, imageFixture);
+  h.render();
+  await settle();
+  h.render();
+  await settle();
+  await h.action("Compose Message");
+  const child = h.child()!;
+  child.props.change(text);
+  await child.props.changeImage(id);
+  return { child, id, text };
+}
+const journal = (h: ReturnType<typeof viewHarness>) => {
+  const raw = h.store.data.get(`hc-attempt-v1:${hcTargetKey(target)}`);
+  return raw ? JSON.parse(raw) : undefined;
+};
+
+test("HC image draft identity survives reopen, differs by image, and delayed success keeps the whole newer draft", async () => {
+  const store = storage(),
+    state = local("image-draft", store),
+    id = randomUUID();
+  await state.load();
+  state.change("task", "same comment");
+  await state.changeImage(id);
+  const reopened = local("image-draft", store);
+  await reopened.load();
+  assert.equal(reopened.drafts.imageId, id);
+  const response = deferred<void>();
+  let firstFingerprint: string | undefined;
+  const sending = state.run(
+    "task",
+    "same comment",
+    async () => true,
+    async () => {
+      firstFingerprint = state.attempt!.fingerprint;
+      assert.equal(state.attempt!.phase, "uploading");
+      await state.imagePhase("uploaded", "/remote/image.png");
+      await state.imagePhase("sending");
+      await response.promise;
+    },
+    () => true,
+    { imageId: id, image: imageMetadata(imageFixture), program: "program" },
+  );
+  await settle();
+  state.change("task", "newer comment");
+  await assert.rejects(reopened.changeImage(randomUUID()), /Wait for the current terminal operation/);
+  response.resolve();
+  await sending;
+  assert.equal(state.drafts.task, "newer comment");
+  assert.equal(state.drafts.imageId, id, "never clear half of a newer image+text draft");
+  const otherId = randomUUID();
+  await state.changeImage(otherId);
+  state.change("task", "same comment");
+  await state.run(
+    "task",
+    "same comment",
+    async () => true,
+    async () => {
+      assert.notEqual(state.attempt!.fingerprint, firstFingerprint);
+    },
+    () => true,
+    { imageId: otherId, image: { ...imageMetadata(imageFixture), sha256: "b".repeat(64) }, program: "program" },
+  );
+  assert.equal(state.drafts.task, "");
+  assert.equal(state.drafts.imageId, undefined);
+});
+
+test("HC image send persists upload then fresh baseline then input, with original comment and metadata in history", async () => {
+  for (const agent of ["claude", "codex"]) {
+    const h = viewHarness(imageScreen(agent)),
+      { child, id, text } = await imageComposer(h);
+    const put = h.feed.client.current.put;
+    const afterUpload = imageScreen(agent);
+    afterUpload.capture.text = "Upload screen activity\nReady for input\n";
+    h.feed.client.current.put = async (target, image) => {
+      assert.equal(journal(h).phase, "uploading");
+      assert.equal(journal(h).imageId, id);
+      assert.ok(journal(h).fingerprint);
+      assert.equal(h.store.data.get(`hc-image-bytes-v1:${hcTargetKey(target)}`), String(image.size));
+      assert.equal(
+        [...h.store.data.keys()].some((key) => key.startsWith("hc-conversation")),
+        false,
+        "baseline is not saved before upload",
+      );
+      h.feed.latest.current = afterUpload;
+      h.feed.screen = afterUpload;
+      return put(target, image);
+    };
+    const request = h.feed.client.current.request;
+    h.feed.client.current.request = async (method, params) => {
+      assert.equal(journal(h).phase, "sending");
+      assert.equal(journal(h).remotePath, "/agent-machine/attachments/image.png");
+      assert.ok([...h.store.data.keys()].some((key) => key.startsWith("hc-conversation")));
+      return request(method, params);
+    };
+    assert.equal(await child.props.send(text, () => true, id), true);
+    assert.deepEqual(
+      h.requests.map((r) => r.method),
+      ["terminal.put", "terminal.send"],
+    );
+    const sent = h.requests[1]!.params;
+    assert.equal(sent.terminal, "remote/t1");
+    assert.equal(sent.force, false);
+    assert.equal(sent.if, "idle");
+    assert.match(sent.text, agent === "claude" ? /Use the Read tool/ : /Use view_image/);
+    assert.match(sent.text, /agent-machine\/attachments\/image.png/);
+    assert.doesNotMatch(sent.text, /private\/mac-cache/);
+    assert.equal(h.render().props.searchText, "");
+    assert.deepEqual(h.released, [id]);
+    assert.equal(journal(h), undefined);
+    const reply = screen({
+      terminal: { ...afterUpload.terminal, status: { state: "done", app: agent }, turn: 1 },
+      capture: { text: `${afterUpload.capture.text}❯ ${sent.text}\nA fixture answer.`, complete: true, how: "screen" },
+    });
+    h.feed.latest.current = reply;
+    h.feed.screen = reply;
+    h.render();
+    await settle();
+    const rows = views(h.render());
+    assert.match(
+      rows.find((v) => v.props.id?.startsWith("user:"))!.props.detail.props.markdown,
+      /Image attached[\s\S]*screenshot.png/,
+    );
+    const output = rows.find((v) => v.props.id?.startsWith("reply:"))!.props.detail.props.markdown;
+    assert.match(output, /A fixture answer/);
+    assert.doesNotMatch(output, /Upload screen activity|agent-machine|Use the Read|Use view_image/);
+    for (const saved of h.store.data.values())
+      assert.ok(!saved.includes(imageFixture.data), "no image body in local storage");
+  }
+});
+
+test("HC image upload never inputs after the target becomes busy, blocked, unreported, replaced, disconnected or closed", async () => {
+  for (const mode of ["working", "blocked", "unreported", "program", "app", "disconnected", "closed"]) {
+    const h = viewHarness(imageScreen()),
+      { child, id, text } = await imageComposer(h);
+    let active = true;
+    const put = h.feed.client.current.put;
+    h.feed.client.current.put = async (target, image) => {
+      const result = await put(target, image);
+      const next = imageScreen();
+      if (mode === "working" || mode === "blocked") next.terminal.status!.state = mode;
+      if (mode === "unreported") next.terminal.reported = false;
+      if (mode === "program") next.terminal.pid = 101;
+      if (mode === "app") next.terminal.status!.app = "codex";
+      if (mode === "disconnected") h.feed.observing.current = false;
+      if (mode === "closed") active = false;
+      h.feed.latest.current = next;
+      h.feed.screen = next;
+      return result;
+    };
+    assert.equal(await child.props.send(text, () => active, id), false, mode);
+    assert.deepEqual(
+      h.requests.map((r) => r.method),
+      ["terminal.put"],
+      mode,
+    );
+    assert.equal(h.render().props.searchText, text);
+    assert.equal(JSON.parse(h.store.data.get(`hc-drafts-v1:${hcTargetKey(target)}`)!).imageId, id);
+    assert.deepEqual(h.released, []);
+    assert.match(h.toasts.at(-1)!.message!, /Image uploaded.*[Nn]o message input was sent/);
+    assert.equal(
+      [...h.store.data.keys()].some((key) => key.startsWith("hc-conversation")),
+      false,
+    );
+  }
+});
+
+test("HC image failures distinguish upload from input, preserve references, and never retry unknown phases", async () => {
+  for (const mode of ["upload", "uploaded-journal", "sending-journal", "history", "send", "blocked"]) {
+    const h = viewHarness(imageScreen()),
+      { child, id, text } = await imageComposer(h);
+    if (mode === "upload")
+      h.feed.client.current.put = async () => {
+        throw new Error("upload transport closed");
+      };
+    if (mode === "send" || mode === "blocked")
+      h.feed.client.current.request = async () => {
+        throw mode === "blocked" ? new HcError("blocked") : new Error("input transport closed");
+      };
+    const save = h.store.setItem;
+    h.store.setItem = async (key, value) => {
+      if (
+        (mode === "history" && key.startsWith("hc-conversation")) ||
+        (key.startsWith("hc-attempt") &&
+          ((mode === "uploaded-journal" && JSON.parse(value).phase === "uploaded") ||
+            (mode === "sending-journal" && JSON.parse(value).phase === "sending")))
+      )
+        throw new Error("disk full");
+      await save(key, value);
+    };
+    assert.equal(await child.props.send(text, () => true, id), false);
+    const phase =
+      mode === "upload" || mode === "uploaded-journal"
+        ? "uploading"
+        : mode === "sending-journal"
+          ? "uploaded"
+          : "sending";
+    const known = mode === "history" || mode === "blocked";
+    assert.equal(journal(h)?.phase, known ? undefined : phase);
+    assert.match(
+      h.toasts.at(-1)!.message!,
+      mode === "send"
+        ? /Image uploaded.*delivery is uncertain/
+        : mode === "upload"
+          ? /upload was not confirmed.*No message input was sent/
+          : /Image uploaded.*[Nn]o message input was sent/,
+    );
+    assert.equal(h.render().props.searchText, text);
+    assert.deepEqual(h.released, []);
+    if (!known) {
+      const restored = local(hcTargetKey(target), h.store);
+      await restored.load();
+      assert.equal(restored.attempt!.imageId, id);
+      assert.equal(restored.drafts.imageId, id);
+      await assert.rejects(
+        restored.run(
+          "task",
+          text,
+          async () => true,
+          async () => {
+            assert.fail("unknown image attempts must not replay");
+          },
+          () => true,
+        ),
+        /Previous input/,
+      );
+    }
+    for (const saved of h.store.data.values()) assert.ok(!saved.includes(imageFixture.data));
+  }
+});
+
+test("HC image budget is durable and rejects uploads beyond 100 MiB without terminal input", async () => {
+  const h = viewHarness(imageScreen()),
+    { child, id, text } = await imageComposer(h);
+  h.store.data.set(`hc-image-bytes-v1:${hcTargetKey(target)}`, String(100 * 1024 * 1024 - imageFixture.size + 1));
+  assert.equal(await child.props.send(text, () => true, id), false);
+  assert.equal(h.requests.length, 0);
+  assert.equal(journal(h), undefined);
+  assert.match(h.toasts.at(-1)!.message!, /100 MiB/);
+  assert.equal(JSON.parse(h.store.data.get(`hc-drafts-v1:${hcTargetKey(target)}`)!).imageId, id);
+});
+
+test("old HC and unidentified programs preserve images while text still sends; dialog controls never accept images", async () => {
+  for (const mode of ["old", "unidentified"]) {
+    const h = viewHarness(imageScreen(mode === "unidentified" ? "agent" : "claude"));
+    if (mode === "old") h.feed.client.current.methods.clear();
+    const { child, id, text } = await imageComposer(h);
+    assert.ok(child.props.imageUnavailable);
+    assert.equal(await child.props.send(text, () => true, id), false);
+    assert.equal(h.requests.length, 0);
+    await child.props.changeImage(undefined);
+    assert.equal(await child.props.send(text, () => true), true);
+    assert.deepEqual(
+      h.requests.map((r) => r.method),
+      ["terminal.send"],
+    );
+  }
+  const h = viewHarness(imageScreen());
+  h.render();
+  await settle();
+  h.render();
+  await settle();
+  await h.action("Respond to Current Prompt");
+  assert.equal(h.child()!.props.changeImage, undefined);
+  assert.equal(await h.child()!.props.send("answer", () => true, randomUUID()), false);
+  assert.equal(h.requests.length, 0);
+});
+
+test("valid captured image opens one saved composer, while offline initial pins never send", async () => {
+  for (const offline of [false, true]) {
+    const id = randomUUID(),
+      h = viewHarness(imageScreen(), undefined, id);
+    h.images.set(id, imageFixture);
+    if (offline) {
+      h.feed.pin.current = undefined as any;
+      h.feed.observing.current = false;
+    }
+    h.render();
+    await settle();
+    h.render();
+    await settle();
+    h.render();
+    await settle();
+    assert.equal(h.children.length, 1);
+    assert.equal(h.child()!.props.imageId, id);
+    assert.equal(JSON.parse(h.store.data.get(`hc-drafts-v1:${hcTargetKey(target)}`)!).imageId, id);
+    assert.equal(h.requests.length, 0, "capturing opens a draft and never sends");
+    if (offline) assert.equal(await h.child()!.props.send("comment", () => true, id), false);
+    assert.equal(h.requests.length, 0);
+  }
+});
+
+test("capture replacement requires confirmation and canceled or uncertain screenshots remain explicitly accessible", async () => {
+  const id = randomUUID(),
+    oldId = randomUUID(),
+    h = viewHarness(imageScreen(), undefined, id);
+  h.images.set(id, imageFixture);
+  h.images.set(oldId, imageFixture);
+  h.store.data.set(
+    `hc-drafts-v1:${hcTargetKey(target)}`,
+    JSON.stringify({ task: "existing comment", answer: "", terminal: "", imageId: oldId }),
+  );
+  h.confirmations.result = false;
+  h.render();
+  await settle();
+  h.render();
+  await settle();
+  h.render();
+  assert.equal(h.children.length, 0);
+  assert.equal(JSON.parse(h.store.data.get(`hc-drafts-v1:${hcTargetKey(target)}`)!).imageId, oldId);
+  assert.equal(h.confirmations.calls[0]!.title, "Replace Draft Image?");
+  h.confirmations.result = true;
+  await h.action("Compose with Captured Image");
+  assert.equal(h.child()!.props.imageId, id);
+  assert.equal(h.child()!.props.text, "existing comment");
+  assert.deepEqual(h.released, [oldId]);
+  assert.equal(h.requests.length, 0);
+
+  const pendingId = randomUUID(),
+    pending = viewHarness(imageScreen(), undefined, pendingId);
+  pending.images.set(pendingId, imageFixture);
+  pending.store.data.set(
+    `hc-attempt-v1:${hcTargetKey(target)}`,
+    JSON.stringify({ id: "uncertain", kind: "task", text: "pending comment", at: 1 }),
+  );
+  pending.render();
+  await settle();
+  pending.render();
+  await settle();
+  pending.render();
+  assert.equal(pending.children.length, 0);
+  assert.match(pending.toasts.at(-1)!.message!, /Previous input is uncertain/);
+  assert.ok(views(pending.render()).some((v) => v.props.title === "Compose with Captured Image"));
+  await pending.action("Inspect Latest Output");
+  await pending.action("Acknowledge Uncertain Input…");
+  await pending.action("Compose with Captured Image");
+  assert.equal(pending.child()!.props.imageId, pendingId);
+  assert.equal(pending.child()!.props.text, "pending comment");
+  assert.equal(pending.requests.length, 0);
+});
+
+test("missing captures do not change drafts, and HcCompose forwards image identity with child lifetime", async () => {
+  const h = viewHarness(imageScreen(), undefined, randomUUID());
+  h.render();
+  await settle();
+  h.render();
+  await settle();
+  assert.equal(h.children.length, 0);
+  assert.equal(h.requests.length, 0);
+  assert.equal(h.store.data.has(`hc-drafts-v1:${hcTargetKey(target)}`), false);
+  const calls: Array<{ text: string; imageId?: string; active: boolean }> = [];
+  const wrapper = componentHarness(["HcCompose"], { Compose: "Compose" });
+  const child = wrapper.render("HcCompose", {
+    text: "comment",
+    change() {},
+    send: async (text: string, active: () => boolean, imageId?: string) => {
+      calls.push({ text, imageId, active: active() });
+      return false;
+    },
+  });
+  wrapper.flush();
+  const imageId = randomUUID();
+  await child.props.send("comment", imageId);
+  wrapper.cleanup();
+  await child.props.send("comment", imageId);
+  assert.deepEqual(calls, [
+    { text: "comment", imageId, active: true },
+    { text: "comment", imageId, active: false },
+  ]);
+});
+
+test("typing or finishing a stale view cannot erase another view's durable image draft", async () => {
+  const store = storage(),
+    a = local("image-shared-draft", store),
+    b = local("image-shared-draft", store),
+    id = randomUUID();
+  await Promise.all([a.load(), b.load()]);
+  await a.changeImage(id);
+  b.change("task", "edited in second view");
+  await settle();
+  const reopened = local("image-shared-draft", store);
+  await reopened.load();
+  assert.equal(reopened.drafts.imageId, id, "typing must merge the latest attachment");
+  assert.equal(reopened.drafts.task, "edited in second view");
+  assert.equal(b.drafts.imageId, id, "the writing view adopts the saved attachment");
+  const response = deferred<void>();
+  const sending = b.run(
+    "task",
+    "edited in second view",
+    async () => true,
+    () => response.promise,
+    () => true,
+    { imageId: id, image: imageMetadata(imageFixture), program: "program" },
+  );
+  await settle();
+  a.change("task", "newer text from first view");
+  await settle();
+  response.resolve();
+  await sending;
+  const final = local("image-shared-draft", store);
+  await final.load();
+  assert.equal(final.drafts.task, "newer text from first view", "success clears only the submitted durable pair");
+  assert.equal(final.drafts.imageId, id);
+});
+
+test("successful HC image input with failed marker cleanup keeps the complete draft and private cache reference", async () => {
+  const h = viewHarness(imageScreen()),
+    { child, id, text } = await imageComposer(h);
+  h.store.removeItem = async () => {
+    throw new Error("cannot remove marker");
+  };
+  assert.equal(await child.props.send(text, () => true, id), false);
+  assert.deepEqual(
+    h.requests.map((r) => r.method),
+    ["terminal.put", "terminal.send"],
+  );
+  assert.equal(h.render().props.searchText, text);
+  assert.equal(JSON.parse(h.store.data.get(`hc-drafts-v1:${hcTargetKey(target)}`)!).imageId, id);
+  assert.equal(journal(h).phase, "sending");
+  assert.deepEqual(h.released, []);
+  const restored = local(hcTargetKey(target), h.store);
+  await restored.load();
+  assert.equal(restored.drafts.task, text);
+  assert.equal(restored.drafts.imageId, id);
+});
+
+test("restoring after marker cleanup failure preserves newer draft text from a different view", async () => {
+  const store = storage(),
+    a = local("image-cleanup-shared", store),
+    b = local("image-cleanup-shared", store),
+    id = randomUUID();
+  await a.load();
+  a.change("task", "submitted text");
+  await a.changeImage(id);
+  await b.load();
+  store.removeItem = async () => {
+    b.change("task", "newer separate draft");
+    await settle();
+    throw new Error("cannot remove marker");
+  };
+  await assert.rejects(
+    a.run(
+      "task",
+      "submitted text",
+      async () => true,
+      async () => {
+        await a.imagePhase("uploaded", "/remote/image.png");
+        await a.imagePhase("sending");
+      },
+      () => true,
+      { imageId: id, image: imageMetadata(imageFixture), program: "program" },
+    ),
+    /delivery is uncertain/,
+  );
+  const restored = local("image-cleanup-shared", store);
+  await restored.load();
+  assert.equal(restored.drafts.task, "newer separate draft");
+  assert.equal(restored.attempt!.imageId, id, "uncertain image remains referenced by its original attempt");
 });

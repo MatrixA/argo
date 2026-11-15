@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -33,7 +34,7 @@ test("pull mode binds from current Bash session, delivers once and replies witho
     workerPid=JSON.parse(readFileSync(join(directory,"pull",stateFile),"utf8")).pid;
     const snapshot=()=>bridge.store.snapshot(binding!);
     assert.equal(snapshot().session.nativeSessionId,"test-existing-session");assert.equal(snapshot().session.status,"waiting");
-    assert.deepEqual(snapshot().session.capabilities,{send:true,streaming:false,interrupt:false,approvals:false,questions:false});
+    assert.deepEqual(snapshot().session.capabilities,{send:true,streaming:false,interrupt:false,approvals:false,questions:false,images:true});
     assert.equal((await cli(["attach"])).alreadyAttached,true);
     const abandoned=spawn(process.execPath,[entry,"next"],{env,stdio:"ignore"});
     await until(()=>snapshot().session.status==="ready");abandoned.kill("SIGTERM");await once(abandoned,"exit");
@@ -52,6 +53,17 @@ test("pull mode binds from current Bash session, delivers once and replies witho
     assert.equal(snapshot().messages.filter(m=>m.role==="assistant").length,1);
     assert.equal(snapshot().messages.find(m=>m.role==="assistant")?.text,"same session answer\nwith multiline text");
     await assert.rejects(cli(["reply","--message","prompt-1","--stdin"],"duplicate"),/No delivered message/);
+    const bytes=Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX4kAAAAASUVORK5CYII=","base64");
+    const metadata={name:"pull.png",mimeType:"image/png",size:bytes.length,sha256:createHash("sha256").update(bytes).digest("hex")};
+    const imageWaiting=cli(["next"]);await until(()=>snapshot().session.status==="ready");
+    const imageResponse=await fetch(`${bridge.url}/v1/sessions/${binding}/messages`,{method:"POST",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},body:JSON.stringify({generation,messageId:"pull-image",text:"inspect this image",image:{...metadata,data:bytes.toString("base64")}})});
+    assert.equal(imageResponse.status,202);const withImage=await imageWaiting;
+    assert.deepEqual(withImage.image.metadata,metadata);assert.deepEqual(readFileSync(withImage.image.path),bytes);assert.match(withImage.instructions,/Read tool/);
+    assert.ok(withImage.image.path.startsWith(join(directory,"images",binding!)));assert.equal(withImage.text,"inspect this image");
+    assert.ok(!JSON.stringify(snapshot()).includes(bytes.toString("base64")));
+    assert.ok(!readFileSync(join(directory,"pull",`${binding}.log`),"utf8").includes(bytes.toString("base64")));
+    await assert.rejects(cli(["next"]),/already delivered/);await cli(["ack","--message","pull-image"]);await cli(["reply","--message","pull-image","--stdin"],"read fixture");
+    await until(()=>snapshot().messages.find(message=>message.id==="pull-image")?.state==="completed");
     await cli(["leave"]);await until(()=>!bridge.store.authenticate(binding!,"unused")&&bridge.store.list().length===0);
     await until(()=>!readdirSync(join(directory,"pull")).some(f=>f.endsWith('.sock')));
   }finally{

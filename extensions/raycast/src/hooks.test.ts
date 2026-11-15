@@ -550,7 +550,7 @@ test("pending-ID storage failures never permit a new send or erase the draft", a
       LocalStorage: {
         async getItem(key: string) {
           if (fail === "read" && key.endsWith(":pending")) throw new Error("disk unavailable");
-          return key.endsWith(":pending") ? undefined : "kept";
+          return key.endsWith(":pending") || key.endsWith(":image") ? undefined : "kept";
         },
         async setItem() {
           throw new Error("disk full");
@@ -669,5 +669,135 @@ test("confirmed rejection keeps the draft and releases its exact pending ID dura
   assert.equal(draft.text, "kept draft");
   const next = await draft.prepare(draft.text, "new-generation");
   assert.notEqual(next.id, first.id);
+  h.cleanup();
+});
+
+test("image drafts restore their immutable reference and preserve one retry ID for an uncertain text and image submission", async () => {
+  const key = "draft:bridge-a:binding";
+  const image = "11111111-1111-4111-a111-111111111111";
+  const replacement = "22222222-2222-4222-a222-222222222222";
+  const data = new Map([
+    [key, "look here"],
+    [`${key}:image`, image],
+  ]);
+  const globals = {
+    LocalStorage: {
+      async getItem(key: string) {
+        return data.get(key);
+      },
+      async setItem(key: string, value: string) {
+        data.set(key, value);
+      },
+      async removeItem(key: string) {
+        data.delete(key);
+      },
+    },
+  };
+  const open = async () => {
+    const h = hookHarness("useDraft", globals);
+    h.render("binding", "bridge-a");
+    h.flush();
+    await settle();
+    return h;
+  };
+  let h = await open();
+  let draft = h.render("binding", "bridge-a");
+  assert.equal(draft.imageId, image);
+  await assert.rejects(draft.prepare("look here", "g", image), /not been validated/);
+  const first = await draft.prepare("look here", "g", image, "immutable-image-fingerprint");
+  h.cleanup();
+  h = await open();
+  draft = h.render("binding", "bridge-a");
+  assert.equal((await draft.prepare("look here", "g", image, "immutable-image-fingerprint")).id, first.id);
+  await assert.rejects(draft.changeImage(replacement), /delivery is unknown/);
+  await assert.rejects(draft.changeImage(undefined), /delivery is unknown/);
+  await assert.rejects(draft.prepare("look here", "g", image, "different-bytes"), /delivery is unknown/);
+  await draft.reject(first.id);
+  await draft.changeImage(replacement);
+  const second = await h.render("binding", "bridge-a").prepare("look here", "g", replacement, "new-image");
+  assert.notEqual(second.id, first.id);
+  await draft.clearIf("look here", image);
+  assert.equal(data.get(`${key}:image`), replacement, "completion for another image cannot clear this draft");
+  assert.equal(await draft.clearIf("look here", replacement), true);
+  assert.ok(!data.has(key) && !data.has(`${key}:image`) && !data.has(`${key}:pending`));
+  h.cleanup();
+});
+
+test("failed durable image selection keeps the previous image and completion preserves newer comment edits", async () => {
+  const key = "draft:bridge-a:binding";
+  const image = "11111111-1111-4111-a111-111111111111";
+  const data = new Map([
+    [key, "old comment"],
+    [`${key}:image`, image],
+  ]);
+  let fail = true;
+  const removal = deferred<void>();
+  const h = hookHarness("useDraft", {
+    LocalStorage: {
+      async getItem(key: string) {
+        return data.get(key);
+      },
+      async setItem(key: string, value: string) {
+        if (fail && key.endsWith(":image")) throw new Error("disk full");
+        data.set(key, value);
+      },
+      async removeItem(item: string) {
+        if (item === key) await removal.promise;
+        data.delete(item);
+      },
+    },
+  });
+  h.render("binding", "bridge-a");
+  h.flush();
+  await settle();
+  let draft = h.render("binding", "bridge-a");
+  await assert.rejects(draft.changeImage("22222222-2222-4222-a222-222222222222"), /disk full/);
+  assert.equal(h.render("binding", "bridge-a").imageId, image);
+  fail = false;
+  await draft.prepare("old comment", "g", image, "bytes");
+  const clearing = draft.clearIf("old comment", image);
+  await settle();
+  draft.change("new comment typed during cleanup");
+  removal.resolve();
+  await clearing;
+  await settle();
+  draft = h.render("binding", "bridge-a");
+  assert.equal(draft.text, "new comment typed during cleanup");
+  assert.equal(draft.imageId, image);
+  assert.equal(data.get(key), draft.text);
+  h.cleanup();
+});
+
+test("a stale native view cannot clear an image or comment saved by another view", async () => {
+  const key = "draft:bridge-a:binding";
+  const image = "11111111-1111-4111-a111-111111111111";
+  const replacement = "22222222-2222-4222-a222-222222222222";
+  const data = new Map([
+    [key, "comment"],
+    [`${key}:image`, image],
+  ]);
+  const h = hookHarness("useDraft", {
+    LocalStorage: {
+      async getItem(key: string) {
+        return data.get(key);
+      },
+      async setItem(key: string, value: string) {
+        data.set(key, value);
+      },
+      async removeItem(key: string) {
+        data.delete(key);
+      },
+    },
+  });
+  h.render("binding", "bridge-a");
+  h.flush();
+  await settle();
+  const stale = h.render("binding", "bridge-a");
+  await stale.prepare("comment", "g", image, "original");
+  data.set(`${key}:image`, replacement);
+  data.set(key, "new comment from another view");
+  await stale.clearIf("comment", image);
+  assert.equal(data.get(key), "new comment from another view");
+  assert.equal(data.get(`${key}:image`), replacement);
   h.cleanup();
 });

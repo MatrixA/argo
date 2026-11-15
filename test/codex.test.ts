@@ -69,7 +69,7 @@ readline.createInterface({input: process.stdin}).on('line', line => {
       }
       break;
     case 'turn/start':
-      check(p,{threadId,clientUserMessageId:'user-1',input:[{type:'text',text:'hello',text_elements:[]}]});
+      check(p,{threadId,clientUserMessageId:'user-1',input:[{type:'text',text:'hello',text_elements:[]},...(mode==='image'?[{type:'localImage',path:'/private/fixture.png'}]:[])]});
       started=true;
       notification('turn/started',{turn:{id:turnId,status:'inProgress'}});
       notification('item/agentMessage/delta',{turnId,itemId:'native item / 1',delta:'hel'});
@@ -129,6 +129,16 @@ test("loaded pagination, metadata-only resume and confirmed send/interrupt on th
     await assert.rejects(adapter.handle({ type: "interrupt", commandId: "interrupt-2" }), /active Codex turn/);
   } finally { await adapter.close(); }
   assert.ok(events.some((event) => event.type === "status" && event.status === "offline"));
+});
+
+test("Codex sends text and native localImage in one turn without authority overrides", async () => {
+  const {events,emit}=sink();
+  const adapter=await createCodexAdapter({threadId:THREAD,transportFactory:()=>new JsonRpc(fake("image"))},emit);
+  try {
+    assert.equal(adapter.capabilities.images,true);
+    await adapter.handle({...send,image:{name:"fixture.png",mimeType:"image/png",size:68,sha256:"0".repeat(64)}},"/private/fixture.png");
+    assert.ok(events.some(event=>event.type==="receipt" && event.state==="accepted"));
+  } finally {await adapter.close();}
 });
 
 test("native completion restores ready; terminal future messages do not invent replyTo", async () => {
