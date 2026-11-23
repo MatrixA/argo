@@ -46,6 +46,7 @@ function logic(names: string[], globals: Record<string, unknown> = {}) {
       HcError,
       hcImageAgent,
       imageAttachmentSchema,
+      retainImage: async () => {},
       hcProgramFingerprint,
       hcTargetKey,
       stripVTControlCharacters,
@@ -1948,5 +1949,39 @@ test("right attachment control clears the restored HC image durably without clea
     assert.equal(h.render().props.searchText, "comment kept on reopen");
     assert.equal(Boolean(h.render().props.searchBarAccessory), uncertain);
     assert.equal(h.requests.length, 0);
+  }
+});
+
+test("HC image selection retains bytes before saving a draft and preserves the previous attachment on retention failure", async () => {
+  for (const fail of [false, true]) {
+    const store = storage();
+    const previous = randomUUID(),
+      selected = randomUUID();
+    const key = hcTargetKey(target);
+    store.data.set(
+      `hc-drafts-v1:${key}`,
+      JSON.stringify({ task: "keep comment", answer: "", terminal: "", imageId: previous }),
+    );
+    const held = deferred<void>();
+    const retained: string[] = [];
+    const implementation = logic(["hcOperationLocks", "hcDraftWrites", "MAX_INPUT", "HcLocalState"], {
+      retainImage: async (id: string) => {
+        retained.push(id);
+        await held.promise;
+        if (fail) throw new Error("image retention failed");
+      },
+    });
+    const state: LocalState = new implementation.HcLocalState(key, store);
+    await state.load();
+    const saving = state.changeImage(selected);
+    await settle();
+    assert.deepEqual(retained, [selected]);
+    assert.equal(JSON.parse(store.data.get(`hc-drafts-v1:${key}`)!).imageId, previous);
+    held.resolve();
+    if (fail) await assert.rejects(saving, /retention failed/);
+    else await saving;
+    assert.equal(JSON.parse(store.data.get(`hc-drafts-v1:${key}`)!).imageId, fail ? previous : selected);
+    assert.equal(state.drafts.imageId, fail ? previous : selected);
+    assert.equal(state.drafts.task, "keep comment");
   }
 });

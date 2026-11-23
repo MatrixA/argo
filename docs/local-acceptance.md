@@ -291,3 +291,21 @@ The native menu and removed-image state were saved under `.context/` and visuall
 Preview and change dispatch are covered by the component tests and their entries were visible in the native dropdown. Their complete desktop flows remain unverified. The actual J global hotkey was not changed or invoked; the dedicated extension's Recent command was used. Production Argo was not overwritten, and this refinement was not committed or pushed.
 
 The dedicated bridge/connector, development watcher and fixture window were stopped after the check. The bridge port was confirmed closed and the fixture-window process absent. The separate development-extension registration remains; no Raycast database was edited.
+
+## Image cache lifecycle review follow-up
+
+The official Store update PR's Greptile review identified valid cache lifecycle defects: a released screenshot could be reattached without clearing its release marker, and abandoned captures without a release marker never expired. Filesystem-backed regressions reproduced active-reference deletion and abandoned-image retention before the fix.
+
+Native and Herdr image selection now retain and validate the image before publishing a durable draft reference. Retention clears the old release marker and renews a bounded recovery window. Cleanup checks persistent values for image references, including draft attachments, uncertain attempts and screenshot recovery. A reference-storage failure aborts cleanup. Unreferenced images expire after seven days from creation, retention or release, with file modification time as the migration fallback for older cache records. Cache mutations use a shared SQLite transaction lock across command isolates and processes, plus a queue within one runtime. The lock database holds no image content or references, fails promptly on contention, and releases automatically if its process exits.
+
+The regressions use isolated private cache directories and a controlled clock. They cover expired releases still referenced by native/Herdr drafts or pending attempts, screenshot recovery, abandoned captures, older metadata, user-original preservation, competing retain/import operations across command instances, lock-holder process termination and recovery, reference-storage failures and recovery, and retain-before-save ordering in native and Herdr drafts. Retention failure preserves the previous attachment and comment.
+
+| Cache lifecycle check | Result |
+| --- | --- |
+| Extension regression suite | 217 passed |
+| Root and extension TypeScript | Passed |
+| Standalone export and protocol regression | 3 passed |
+| Raycast-managed Node 22.22.2 | All 9 filesystem/cache lifecycle tests passed |
+| Fresh standalone export | Locked install without lifecycle scripts, official lint and distribution build passed |
+
+This follow-up changes cache lifecycle and persistence, not conversation controls. No new desktop UI or paid model acceptance is claimed, and the production installation was not changed. Earlier desktop preview/change and live runtime limitations remain in effect.
